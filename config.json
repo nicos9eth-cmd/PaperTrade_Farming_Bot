@@ -1,0 +1,23 @@
+{
+  "wallet": "",
+  "build": "c23606f9dde9",
+  "targetMove": 0.01,
+  "closeAt": 0.85,
+  "reserve": 0.01,
+  "maxMarginPerLeg": null,
+  "maxNetLossUsd": 25,
+  "minMintRate": 10,
+  "maxCostPerPaper": 0.012,
+  "pauseWhenQueueActive": true,
+  "pollSeconds": 2,
+  "simulationCapital": null,
+  "alertAt": 0.8,
+  "urgentAt": 0.92,
+  "sound": true,
+  "openDeadlineSeconds": 300,
+  "oiSafetyFactor": 3,
+  "maxOrphanLegs": 3,
+  "minCloseAt": 0.5,
+  "riskSigmas": 4,
+  "baseDelaySeconds": 5
+}
