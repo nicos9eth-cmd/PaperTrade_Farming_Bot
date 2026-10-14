@@ -4,3 +4,5 @@ journal*.csv
 *.log
 partage/
 .budget.json
+.site-snapshot.json
+nouveautes-papertrade.txt

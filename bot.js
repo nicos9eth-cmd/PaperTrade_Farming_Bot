@@ -12,6 +12,7 @@ const dashboard = require('./lib/dashboard');
 const { tracker } = require('./lib/risk');
 const pressure = require('./lib/pressure');
 const site = require('./lib/site');
+const changes = require('./lib/changes');
 const { buildPairs, pairStatus } = require('./lib/pairs');
 const { mintRate, pairOutcome } = require('./lib/economics');
 const { sizePair, cycleRange } = require('./lib/sizing');
@@ -301,6 +302,26 @@ async function main() {
       })
       .catch(() => {});
 
+  // What each deploy changed goes to nouveautes-papertrade.txt; a failed read is retried at the next check.
+  let changesError = null;
+  const noteChanges = () =>
+    changes.record(config.build, version.formatOk).then((d) => {
+      if (!d) return;
+      if (d.error) {
+        if (d.error !== changesError) log(`Lecture des nouveautés de Papertrade impossible pour l'instant (${d.error}).`);
+        changesError = d.error;
+        return;
+      }
+      changesError = null;
+      const parts = [
+        d.added && `${d.added} texte(s) ajouté(s)`,
+        d.removed && `${d.removed} retiré(s)`,
+        d.changed && `${d.changed} partie(s) du site modifiée(s)`,
+        d.params && `${d.params} paramètre(s) changé(s)`,
+      ].filter(Boolean);
+      log(`Nouveautés Papertrade : ${parts.join(', ') || 'aucun changement visible'}. Détail : nouveautes.bat`);
+    });
+
   // Follow site deploys: new build id, and a check that the order format is unchanged.
   const refreshSite = () =>
     site
@@ -311,8 +332,10 @@ async function main() {
           config.build = next.build;
         }
         if (next.formatOk !== null) version = next;
+        return noteChanges();
       })
       .catch(() => {});
+  if (version.build) noteChanges().catch(() => {});
 
   const step = async () => {
     tick++;

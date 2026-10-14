@@ -174,6 +174,7 @@ Tout est aussi écrit dans `bot.log`, et chaque cycle dans `journal.csv` (ouvrab
 - Il ferme plus tôt quand le marché est agité, que la file du relayer s'allonge ou que les ordres sont lents, pour éviter la liquidation. Il n'ouvre pas de paire quand la congestion est « HIGH ».
 - Quand le réseau est saturé (grosse annonce économique, des centaines d'ordres en file), une clôture peut mettre plusieurs minutes à passer : le bot attend son tour sans la renvoyer. **Ne clique pas sur Close sur le site à ce moment-là** : ton ordre irait dans la même file.
 - Il suit les mises à jour du site Papertrade et vérifie que le format des ordres n'a pas changé. Si le format change, il arrête d'ouvrir au lieu d'envoyer des ordres faux.
+- Il note ce que chaque mise à jour de Papertrade a changé, puisque Papertrade ne publie pas de liste des changements : textes ajoutés ou retirés sur le site (boutons, messages d'erreur), parties du site modifiées, paramètres changés (levier max, taille minimum, haircut, mint). Double-clique sur `nouveautes.bat` pour lire le détail, la plus récente en haut. Les textes sont en anglais, comme sur le site.
 - Il n'ouvre pas si l'open interest est plein, si le trading est en pause ou si la file de paiement est active : il attend et réessaie.
 - Il continue malgré les petites coupures internet.
 - Si une seule jambe s'ouvre, il la referme, attend de plus en plus longtemps, et abandonne après 3 fois de suite.
