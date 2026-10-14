@@ -14,7 +14,13 @@ const pressure = require('./lib/pressure');
 const site = require('./lib/site');
 const { buildPairs, pairStatus } = require('./lib/pairs');
 const { mintRate, pairOutcome } = require('./lib/economics');
-const config = require('./config.json');
+let config;
+try {
+  config = require('./lib/config').load();
+} catch (e) {
+  console.error(e.message);
+  process.exit(1);
+}
 
 const LIVE = process.argv.includes('--live');
 const SCREEN = process.stdout.isTTY && !process.argv.includes('--plain');
@@ -104,7 +110,7 @@ function admission(mkts, market, price, notional) {
 }
 
 async function main() {
-  if (!config.wallet) throw new Error('Aucun wallet configuré : lance d\'abord setup.bat');
+  if (!config.wallet && LIVE) throw new Error('Aucun wallet configuré : lance d\'abord setup.bat');
   const mkts = await api.markets();
   let proto = await api.protocol();
   let version = await site.check();
@@ -118,8 +124,9 @@ async function main() {
     if (!key || key.user !== config.wallet.toLowerCase()) throw new Error('Aucune clé de session pour ce wallet : lance d\'abord setup.bat');
     ex = exchange.live(config, key, mkts);
   } else {
-    const w = await api.walletSnapshot(config.wallet);
-    const capital = config.simulationCapital || api.num(w.funds.availableBalance) + api.num(w.locked);
+    // Before setup (no wallet yet), the simulation runs on simulationCapital, or $100.
+    const w = config.wallet && !config.simulationCapital ? await api.walletSnapshot(config.wallet) : null;
+    const capital = config.simulationCapital || (w ? api.num(w.funds.availableBalance) + api.num(w.locked) : 100);
     ex = exchange.simulated(config, mkts, capital, () => proto);
   }
 
@@ -164,8 +171,10 @@ async function main() {
   };
 
   const wait = (reason) => {
-    if (reason !== waitReason) log(`En attente : ${reason}.`);
-    waitReason = reason;
+    // Logged once per kind of wait: the figures in brackets (orders pending, room left) change every tick.
+    const kind = reason.replace(/\s*\(.*\)$/, '');
+    if (kind !== waitReason) log(`En attente : ${reason}.`);
+    waitReason = kind;
     status = `En attente : ${reason}`;
   };
 
@@ -179,6 +188,11 @@ async function main() {
     } catch (e) {
       if (TEMPORARY.has(e.reason)) {
         log(`${label} refusé pour l'instant (${e.reason}).`);
+        return e;
+      }
+      // A close refused because the positions are already being closed is not a failure.
+      if (e.reason === 'noOpenPositions') {
+        log(`${label} déjà en cours au relayer.`);
         return e;
       }
       errors++;
@@ -353,6 +367,14 @@ async function main() {
         recordCycle(price);
         return;
       }
+      // Still queued at the relayer (it can take minutes when the network is congested):
+      // keep waiting, a resend would only be refused.
+      if (Date.now() > awaiting.until && left.every((p) => state.closing.includes(p.id))) {
+        if (!awaiting.queuedLogged) log('Clôture toujours dans la file du relayer, attente.');
+        awaiting.queuedLogged = true;
+        status = 'Clôture dans la file du relayer (réseau congestionné)';
+        return;
+      }
       if (Date.now() > awaiting.until) {
         log('Clôture non confirmée après 90 s, nouvelle tentative.');
         awaiting = null;
@@ -367,6 +389,11 @@ async function main() {
     const due = pairs.filter((p) => pairStatus(p, price, proto).progress >= closeAt);
     if (due.length) {
       if (Date.now() < closeRetryAt) return;
+      // After a restart, a close sent earlier may still be queued: wait for it rather than resend.
+      if (due.every((p) => state.closing.includes(p.long.id) && state.closing.includes(p.short.id))) {
+        status = 'Clôture dans la file du relayer (réseau congestionné)';
+        return;
+      }
       const s = pairStatus(due[0], price, proto);
       await closeAll(due.flatMap((p) => [p.long, p.short]), `mouvement ${pct(s.move)} (${Math.round(s.progress * 100)}% du chemin vers la liquidation, seuil ${Math.round(closeAt * 100)}%, délai estimé ${riskView.delay.toFixed(0)} s)`);
       return;

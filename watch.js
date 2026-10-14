@@ -7,7 +7,7 @@ const { execFile } = require('child_process');
 const api = require('./lib/api');
 const { buildPairs, pairStatus } = require('./lib/pairs');
 const { mintRate } = require('./lib/economics');
-const config = require('./config.json');
+const config = require('./lib/config').load();
 
 const usd = (n) => '$' + n.toFixed(2);
 const pct = (n) => (n * 100).toFixed(2) + '%';

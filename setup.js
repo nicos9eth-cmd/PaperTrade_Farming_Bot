@@ -4,16 +4,13 @@
 // The key can only open and close positions; it cannot withdraw, stake or claim.
 // If config.json has no wallet yet, the account connected on the page is saved there.
 
-const fs = require('fs');
 const http = require('http');
-const path = require('path');
 const { exec } = require('child_process');
 const api = require('./lib/api');
 const intents = require('./lib/intents');
 const site = require('./lib/site');
-
-const CONFIG_FILE = path.join(__dirname, 'config.json');
-const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+const configFile = require('./lib/config');
+const config = configFile.load();
 const PORT = 8765;
 const expected = (config.wallet || '').toLowerCase();
 
@@ -116,7 +113,7 @@ async function main() {
         pending = null;
         if (!expected) {
           config.wallet = key.user;
-          fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2) + '\n');
+          configFile.save(config);
         }
         console.log('Enregistrement accepté par le relayer, clé enregistrée dans .session-key.json (ne partage jamais ce fichier). Attente de la confirmation...');
         let ok = false;
