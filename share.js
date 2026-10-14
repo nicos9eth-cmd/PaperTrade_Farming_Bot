@@ -5,7 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const FILES = ['bot.js', 'watch.js', 'setup.js', 'share.js', 'package.json', 'package-lock.json', 'README.md', '.gitignore'];
+const FILES = ['bot.js', 'watch.js', 'setup.js', 'configure.js', 'share.js', 'package.json', 'package-lock.json', 'README.md', '.gitignore'];
 const DIRS = ['lib', 'test'];
 const BATS = fs.readdirSync(__dirname).filter((f) => f.endsWith('.bat'));
 const out = path.join(__dirname, 'partage', 'PaperTradeBot');

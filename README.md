@@ -6,7 +6,7 @@ Bot qui farme le token PAPER sur [Papertrade](https://exchange.papertrade.xyz) t
 
 **Ce n'est pas gratuit.** Chaque cycle coûte environ 3 à 6 % du capital engagé. Le PAPER ne peut pas être vendu pour l'instant, il rapporte seulement des dividendes en USDC quand il est staké. N'utilise que de l'argent que tu acceptes de dépenser.
 
-**Le résumé en 5 étapes :** installer Node.js → `installer.bat` → tester avec `bot-simulation.bat` → `setup.bat` (une signature) → régler le budget dans `config.json` → `bot-live.bat`.
+**En résumé :** installer Node.js → `installer.bat` → tester avec `bot-simulation.bat` → `setup.bat` (une signature) → **`reglages.bat`** (2 questions sur ton montant et ton budget) → `bot-live.bat`.
 
 ---
 
@@ -51,7 +51,16 @@ Le bot ne te demandera **jamais** ta seed ni ta clé privée. Sa clé est rangé
 
 ## 5. Régler le bot selon ton montant
 
-Tout se règle dans **`config.json`**. Ouvre-le avec le Bloc-notes (clic droit → Ouvrir avec → Bloc-notes).
+**Ne lance pas le bot avec les réglages par défaut** : ils sont faits pour un compte d'environ 25 $. Double-clique **`reglages.bat`**. Il lit ton solde Papertrade, te demande :
+
+1. combien le bot peut engager (tout le solde, ou une partie) ;
+2. combien tu acceptes de dépenser au total (le budget) ;
+
+puis il t'affiche le coût et le PAPER attendus par cycle et le nombre de cycles que ton budget permet, avant d'enregistrer. Relance-le quand tu déposes ou retires des fonds, ou pour remettre un budget.
+
+Au démarrage, `bot-live.bat` rappelle aussi ces chiffres et prévient si le budget ne couvre même pas un cycle.
+
+La suite explique les mêmes réglages pour ceux qui préfèrent modifier **`config.json`** à la main (clic droit → Ouvrir avec → Bloc-notes).
 
 ### Combien ça coûte et combien ça rapporte
 
@@ -128,6 +137,7 @@ Réglages avancés, à ne pas toucher sans raison : `riskSigmas`, `baseDelaySeco
 |---|---|
 | **`bot-live.bat`** | Mode réel : le bot trade avec ton solde Papertrade. |
 | **`bot-simulation.bat`** | Même stratégie au vrai prix, **sans envoyer aucun ordre**. |
+| **`reglages.bat`** | Assistant : règle le montant engagé et le budget selon ton solde. |
 | `alertes.bat` | Ne trade pas : bipe quand il faut fermer ta paire à la main. |
 
 Laisse la fenêtre noire ouverte. Pour arrêter : **Ctrl+C**, ou ferme la fenêtre. **Les positions ouvertes restent alors ouvertes, sans surveillance** : relance le bot (il les reprend) ou ferme-les sur le site.
@@ -172,7 +182,8 @@ Tout est aussi écrit dans `bot.log`, et chaque cycle dans `journal.csv` (ouvrab
 | `Clé de session absente ou expirée` | La clé dure 30 jours : relance `setup.bat`. |
 | `Mauvais compte sélectionné dans le wallet` | Choisis le compte qui a tes fonds Papertrade dans ton wallet, puis recharge la page. |
 | `capital insuffisant` | Il faut au moins 10 USDC par jambe **déposés sur Papertrade**. |
-| `budget atteint` | Normal : augmente `maxNetLossUsd` si tu veux continuer. |
+| `budget atteint` | Normal : relance `reglages.bat` (ou augmente `maxNetLossUsd`) si tu veux continuer. |
+| `le budget restant couvre moins d'un cycle` | Lance `reglages.bat` pour adapter le budget à ton solde. |
 | `PAPER staké … minimum de 1000` | Stake du PAPER sur le site, sinon le relayer peut refuser tes ordres. |
 | `open interest … plein` / `relayer congestionné` | Normal, le bot attend tout seul. |
 | `Lecture impossible : …` puis `Lectures rétablies` | Petite coupure internet, rien à faire. |

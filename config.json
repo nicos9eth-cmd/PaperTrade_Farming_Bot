@@ -3,6 +3,7 @@
   "build": "c23606f9dde9",
   "targetMove": 0.01,
   "closeAt": 0.85,
+  "minCloseAt": 0.5,
   "reserve": 0.01,
   "maxMarginPerLeg": null,
   "maxNetLossUsd": 25,
@@ -17,7 +18,6 @@
   "openDeadlineSeconds": 300,
   "oiSafetyFactor": 3,
   "maxOrphanLegs": 3,
-  "minCloseAt": 0.5,
   "riskSigmas": 4,
   "baseDelaySeconds": 5
 }

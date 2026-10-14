@@ -121,7 +121,7 @@ async function main() {
           await new Promise((r) => setTimeout(r, 3000));
           ok = await registered(key.user, key).catch(() => false);
         }
-        const text = ok ? 'Clé autorisée. Tu peux fermer cette page et lancer le bot.' : 'Envoyé, mais pas encore confirmé après 2 minutes. Relance setup.bat pour vérifier.';
+        const text = ok ? 'Clé autorisée. Tu peux fermer cette page. Prochaine étape : reglages.bat, puis bot-live.bat.' : 'Envoyé, mais pas encore confirmé après 2 minutes. Relance setup.bat pour vérifier.';
         console.log(text);
         reply(200, text);
         if (ok) server.close();

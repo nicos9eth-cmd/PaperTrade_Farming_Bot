@@ -14,6 +14,7 @@ const pressure = require('./lib/pressure');
 const site = require('./lib/site');
 const { buildPairs, pairStatus } = require('./lib/pairs');
 const { mintRate, pairOutcome } = require('./lib/economics');
+const { sizePair, cycleRange } = require('./lib/sizing');
 let config;
 try {
   config = require('./lib/config').load();
@@ -83,17 +84,6 @@ function budgetStart(realized) {
   return realized;
 }
 
-// Margin per leg and leverage for a new pair, or the reason none can be opened.
-function sizePair(available, mkts, market) {
-  let margin = Math.floor(((available * (1 - config.reserve)) / 2) * 100) / 100;
-  if (config.maxMarginPerLeg) margin = Math.min(margin, config.maxMarginPerLeg);
-  if (margin < mkts.minMargin) return { reason: `capital insuffisant (${usd(available)} disponible, minimum ${usd(mkts.minMargin)} par jambe)` };
-  const wanted = Math.round(1 / (config.targetMove / config.closeAt + market.liquidationBuffer));
-  const leverage = Math.min(market.maxLeverage, Math.max(Math.ceil(mkts.minNotional / margin), wanted));
-  if (market.maxNotional) margin = Math.min(margin, Math.floor((market.maxNotional / leverage) * 100) / 100);
-  return { margin, leverage, bustMove: 1 / leverage - market.liquidationBuffer };
-}
-
 // Why a new pair cannot be opened right now (market limits), or which leg to send first.
 function admission(mkts, market, price, notional) {
   if (mkts.tradingPaused) return { wait: 'trading en pause sur Papertrade' };
@@ -139,6 +129,13 @@ async function main() {
   const startedAt = Date.now();
   const start = { realized: state.realized, paper: state.paper };
   const budgetFrom = budgetStart(state.realized);
+  // Default settings on a bigger account: one cycle can cost more than the whole budget.
+  const cycle = btc() ? cycleRange(state.available + state.locked, mkts, btc(), proto, config) : null;
+  if (cycle && !cycle.reason && config.maxNetLossUsd) {
+    const left = config.maxNetLossUsd - (budgetFrom - state.realized);
+    log(`Réglages : ~${usd(cycle.margin)} par jambe, un cycle coûte ${usd(cycle.early.cost)} à ${usd(cycle.late.cost)} pour ${Math.round(cycle.early.minted)} à ${Math.round(cycle.late.minted)} PAPER ; budget restant ${usd(left)}.`);
+    if (left < cycle.late.cost) log(`Attention : le budget restant couvre moins d'un cycle, le bot s'arrêtera vite. Lance reglages.bat pour l'adapter à ton solde.`);
+  }
   let last = { realized: state.realized, paper: state.paper };
   let cycles = 0;
   let awaiting = null; // { kind: 'open' | 'close', ids, sentAt, until, orphan }
@@ -225,7 +222,7 @@ async function main() {
   const openPair = async (price) => {
     const market = btc();
     if (!market) return wait('marché BTC introuvable');
-    const size = sizePair(state.available, mkts, market);
+    const size = sizePair(state.available, mkts, market, config);
     if (size.reason) {
       // The balance may simply not be credited yet after a close: only give up if it lasts.
       lowBalanceSince = lowBalanceSince || Date.now();
