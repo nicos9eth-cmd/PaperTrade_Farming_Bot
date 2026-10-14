@@ -6,10 +6,11 @@
 const readline = require('readline');
 const api = require('./lib/api');
 const configFile = require('./lib/config');
-const { cycleRange } = require('./lib/sizing');
+const { cycleRange, lowestLeverage } = require('./lib/sizing');
 const { mintRate } = require('./lib/economics');
 
 const usd = (n) => n.toFixed(2) + ' $';
+const pct = (n) => (n * 100).toFixed(2) + ' %';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Answers are queued as lines arrive, so typing ahead (or piping answers in) loses nothing.
@@ -108,12 +109,42 @@ async function main() {
   );
   const maxMarginPerLeg = use === null || use >= balance ? null : Math.floor(use / 2);
   const engaged = use === null ? balance : Math.min(use, balance);
-  const c = cycleRange(balance, mkts, market, proto, { ...config, maxMarginPerLeg });
-  if (c.reason) throw new Error(c.reason);
+  // Leverage: the default aims at closing after a ~1 % move; the lowest leverage the balance allows
+  // puts liquidation further away for about the same PAPER per cycle, but cycles come less often.
+  const base = { ...config, maxMarginPerLeg };
+  const fast = cycleRange(balance, mkts, market, proto, { ...base, targetMove: configFile.DEFAULTS.targetMove });
+  if (fast.reason) throw new Error(fast.reason);
+  const low = lowestLeverage(balance, mkts, market, base);
+  let targetMove = configFile.DEFAULTS.targetMove;
+  let c = fast;
+  if (!low.reason && low.leverage < fast.leverage) {
+    const slow = cycleRange(balance, mkts, market, proto, { ...base, targetMove: low.targetMove });
+    const rarer = ((slow.bustMove / fast.bustMove) ** 2).toFixed(1);
+    const option = (n, name, x, note) =>
+      `   ${n}. ${name} : levier x${x.leverage}, taille ${usd(x.notional)}, clôture vers ${pct(x.bustMove * config.closeAt)} de mouvement, liquidation à ${pct(x.bustMove)}.\n      ${Math.round(x.late.minted)} PAPER par cycle pour ${usd(x.late.cost)}. ${note}`;
+    console.log('\n2) Quel levier ?');
+    console.log(option(1, 'Normal', fast, 'Cycles plus fréquents.'));
+    console.log(option(2, 'Prudent', slow, `Liquidation plus loin, mais le BTC doit bouger plus : cycles environ ${rarer} fois plus rares.`));
+    const current = config.targetMove > configFile.DEFAULTS.targetMove ? '2' : '1';
+    for (;;) {
+      const raw = await ask(`   Choix 1 ou 2 (Entrée = ${current}) : `);
+      if (raw === null) throw new Error('saisie interrompue');
+      const pick = raw.trim() || current;
+      if (pick === '1') break;
+      if (pick === '2') {
+        targetMove = low.targetMove;
+        c = slow;
+        break;
+      }
+      console.log('  Tape 1 ou 2.');
+    }
+  } else {
+    console.log(`\n2) Levier : x${fast.leverage}, déjà le plus bas possible avec ce montant (Papertrade impose ${mkts.minNotional} $ de taille par position).`);
+  }
   console.log('\n' + describe(c));
 
   const suggested = Math.max(1, Math.ceil(c.late.cost * 10));
-  console.log(`\n2) Combien acceptes-tu de dépenser au total ? Une fois ce budget atteint, le bot s'arrête.`);
+  console.log(`\n3) Combien acceptes-tu de dépenser au total ? Une fois ce budget atteint, le bot s'arrête.`);
   const budget = await askAmount(`   Montant, ou Entrée pour ${suggested} $ (environ 10 cycles) : `, (v) =>
     v !== null && v < c.early.cost ? `C'est moins qu'un seul cycle (${usd(c.early.cost)} minimum).` : null
   );
@@ -122,6 +153,7 @@ async function main() {
 
   console.log('\nRésumé :');
   console.log(`  Engagé : ${usd(engaged)}${maxMarginPerLeg ? ` (${maxMarginPerLeg} $ max par jambe)` : ' (tout le solde)'}`);
+  console.log(`  Levier : x${c.leverage}${targetMove === configFile.DEFAULTS.targetMove ? ' (normal)' : ' (prudent)'}`);
   console.log(`  Budget : ${usd(maxNetLossUsd)}, soit ${cycles[0]} à ${cycles[1]} cycles et ~${Math.round(cycles[0] * c.late.minted)} PAPER`);
   if (!config.wallet) console.log('  (estimation pour le montant indiqué ; relance reglages.bat après setup.bat pour lire ton vrai solde)');
   const answer = await ask('\nEnregistrer ces réglages dans config.json ? (O/n) ');
@@ -131,7 +163,7 @@ async function main() {
     return;
   }
   const budgetChanged = config.maxNetLossUsd !== maxNetLossUsd;
-  configFile.save({ ...config, maxMarginPerLeg, maxNetLossUsd });
+  configFile.save({ ...config, maxMarginPerLeg, maxNetLossUsd, targetMove });
   console.log('\nRéglages enregistrés.');
   if (budgetChanged) console.log('Nouveau budget : le compteur de dépenses repart de zéro au prochain lancement du bot.');
   console.log(config.wallet ? 'Lance bot-live.bat, ou ferme et relance-le s\'il tourne déjà.' : 'Prochaine étape : setup.bat, puis bot-live.bat.');

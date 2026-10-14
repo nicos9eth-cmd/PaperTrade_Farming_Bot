@@ -34,7 +34,7 @@ Double-clique **`bot-simulation.bat`**. Le bot tourne au vrai prix du BTC, avec 
 
 Pour simuler avec ton propre montant, mets par exemple `"simulationCapital": 250` dans `config.json`. Remets `null` après le test.
 
-Un cycle ne se termine que quand le BTC a bougé d'environ 0,6 à 1 %. Si le marché est calme, il peut ne rien se passer pendant des heures : c'est normal.
+Un cycle ne se termine que quand le BTC a bougé d'environ 0,6 à 1 % (jusqu'à 2 % avec le levier prudent). Si le marché est calme, il peut ne rien se passer pendant des heures : c'est normal.
 
 ## 4. Autoriser le bot sur ton compte
 
@@ -54,7 +54,8 @@ Le bot ne te demandera **jamais** ta seed ni ta clé privée. Sa clé est rangé
 **Ne lance pas le bot avec les réglages par défaut** : ils sont faits pour un compte d'environ 25 $. Double-clique **`reglages.bat`**. Il lit ton solde Papertrade, te demande :
 
 1. combien le bot peut engager (tout le solde, ou une partie) ;
-2. combien tu acceptes de dépenser au total (le budget) ;
+2. quel levier : **normal** ou **prudent** (voir plus bas) ;
+3. combien tu acceptes de dépenser au total (le budget) ;
 
 puis il t'affiche le coût et le PAPER attendus par cycle et le nombre de cycles que ton budget permet, avant d'enregistrer. Relance-le quand tu déposes ou retires des fonds, ou pour remettre un budget.
 
@@ -84,6 +85,21 @@ Le prix de revient tourne autour de **0,007 $ par PAPER**, quel que soit le mont
 Règle simple : **budget = coût d'un cycle × nombre de cycles voulus**. Exemple : 100 $ sur le compte et 10 cycles voulus, donc `"maxNetLossUsd": 50`.
 
 Le budget est mémorisé d'un lancement à l'autre. Pour repartir de zéro, change sa valeur. `null` veut dire sans limite (déconseillé).
+
+### Levier normal ou prudent
+
+À marge égale, **le PAPER gagné par cycle ne dépend presque pas du levier** : la perte de la jambe perdante vaut à peu près sa marge × le seuil de clôture. Baisser le levier met donc la liquidation plus loin sans rien coûter par cycle (c'est même un peu moins cher par PAPER). Le prix à payer : le BTC doit bouger davantage, donc **les cycles sont plus rares**.
+
+| | Normal | Prudent |
+|---|---|---|
+| Levier | ~82× | le plus bas possible en gardant 1 000 $ de taille par position, sans viser plus de 2 % de mouvement (61× avec 33 $, 42× à partir de ~50 $) |
+| Clôture vers | 1 % de mouvement | 1,3 à 2 % |
+| Liquidation | 1,17 % | 1,6 à 2,3 % |
+| Cycles | plus fréquents | 1,8 à 4 fois plus rares |
+
+Le prudent est conseillé si ta connexion est instable, si tu ne surveilles pas, ou les jours d'annonces économiques (CPI, FOMC) où le réseau Papertrade sature et où une clôture peut mettre de longues minutes à passer. Le normal farme plus vite, ce qui compte aussi puisque le taux de mint baisse avec le temps.
+
+Le choix se fait dans `reglages.bat` ; à la main, c'est `targetMove` (0.01 = normal, jusqu'à 0.0198 = prudent maximal). Le levier n'est choisi qu'à l'ouverture d'une paire : changer le réglage ne touche pas une paire déjà ouverte, il s'applique au cycle suivant après relance du bot.
 
 ### Profils prêts à l'emploi
 
@@ -123,7 +139,7 @@ Remplace seulement ces lignes dans `config.json`, sans toucher au reste.
 | `minMintRate` | Le bot n'ouvre plus si Papertrade donne moins de ce nombre de PAPER par dollar perdu. | 10 |
 | `closeAt` | Part du chemin vers la liquidation à laquelle le bot ferme au plus tard (0.85 = 85 %). | 0.85 |
 | `minCloseAt` | Jusqu'où il peut avancer la clôture quand le marché s'agite ou que le réseau est congestionné. | 0.5 |
-| `targetMove` | Mouvement de prix visé avant clôture (0.01 = 1 %). | 0.01 |
+| `targetMove` | Mouvement de prix visé avant clôture (0.01 = 1 %). Plus grand = levier plus bas (voir « Levier normal ou prudent »). Avec peu de capital, la taille minimale de Papertrade impose un levier plancher. | 0.01 |
 | `pauseWhenQueueActive` | Attendre quand la file de paiement de Papertrade est active. | true |
 | `simulationCapital` | Capital fictif de la simulation, `null` pour ton vrai solde (ou 100 $ sans wallet). | null |
 | `sound` | Bips de `alertes.bat`. | true |

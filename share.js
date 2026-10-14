@@ -17,9 +17,9 @@ for (const d of DIRS) {
   fs.mkdirSync(path.join(out, d));
   for (const f of fs.readdirSync(path.join(__dirname, d))) fs.copyFileSync(path.join(__dirname, d, f), path.join(out, d, f));
 }
-const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
-config.wallet = '';
-fs.writeFileSync(path.join(out, 'config.json'), JSON.stringify(config, null, 2) + '\n');
+// The copy gets the documented default settings, never the owner's (wallet, budget, leverage).
+const { DEFAULTS } = require('./lib/config');
+fs.writeFileSync(path.join(out, 'config.json'), JSON.stringify(DEFAULTS, null, 2) + '\n');
 
 console.log(`Copie propre créée dans : ${out}`);
-console.log('Elle ne contient ni ta clé de session, ni ton adresse, ni tes journaux.');
+console.log('Elle ne contient ni ta clé de session, ni ton adresse, ni tes journaux, ni tes réglages.');
