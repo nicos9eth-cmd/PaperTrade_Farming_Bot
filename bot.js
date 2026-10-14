@@ -450,14 +450,31 @@ async function main() {
     await sleep(config.pollSeconds * 1000);
     try {
       await step();
+      if (lastLoopError) log(`Lectures rétablies après ${Math.round((Date.now() - lastLoopError.since) / 1000)} s (${lastLoopError.count} échec(s))`);
       lastLoopError = null;
     } catch (e) {
       // Nothing may take the loop down while a position can be open: report and try again.
+      // A run of failures is logged once when it starts and once when it ends.
       status = `Lecture impossible : ${e.message}`;
-      if (e.message !== lastLoopError) log(status);
-      lastLoopError = e.message;
+      if (!lastLoopError) {
+        log(status);
+        lastLoopError = { since: Date.now(), count: 0 };
+      }
+      lastLoopError.count++;
     }
   }
+}
+
+// Ctrl+C read as a keystroke: a window started from another program can have the Ctrl+C
+// signal disabled, which left the window's close button as the only way out.
+if (process.stdin.isTTY) {
+  process.stdin.setRawMode(true);
+  process.stdin.on('data', (key) => {
+    if (key[0] !== 3) return;
+    log('Arrêt demandé au clavier (Ctrl+C)');
+    if (SCREEN) process.stdout.write('\x1b[2J\x1b[H');
+    process.exit(0);
+  });
 }
 
 process.on('uncaughtException', (e) => log(`Erreur inattendue : ${e.message}`));
