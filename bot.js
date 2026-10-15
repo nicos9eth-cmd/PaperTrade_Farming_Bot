@@ -94,7 +94,8 @@ function admission(mkts, market, price, notional) {
   const need = notional * config.oiSafetyFactor;
   if (room.long < need) return { wait: `open interest long plein (${usd(Math.max(0, room.long))} libre)` };
   if (room.short < need) return { wait: `open interest short plein (${usd(Math.max(0, room.short))} libre)` };
-  // The leg that widens the net imbalance is the one most likely to be refused: send it first.
+  // The leg that widens the net imbalance is the one most likely to be refused: sign and send it first
+  // (a few milliseconds ahead of the other, which leaves at the same time).
   const longFirst = room.net >= 0;
   if (mkts.maxNetOi && Math.abs(room.net) + need > mkts.maxNetOi) return { wait: `open interest net au plafond côté ${longFirst ? 'long' : 'short'}` };
   return { longFirst };
@@ -240,25 +241,25 @@ async function main() {
       return stop(`coût attendu $${expected.costPerPaper.toFixed(4)} par PAPER au-dessus du plafond $${config.maxCostPerPaper}`);
     log(`Ouverture paire BTC @ ${price.toFixed(1)} : ${usd(size.margin)} x${size.leverage} par jambe, clôture visée à ${pct(size.bustMove * config.closeAt)} (attendu : coût ${usd(expected.cost)}, ~${Math.round(expected.minted)} PAPER)`);
     status = 'Ouverture de la paire';
-    let sent = 0;
-    for (const isLong of gate.longFirst ? [true, false] : [false, true]) {
-      const failed = await act(`ouverture ${isLong ? 'long' : 'short'}`, () => ex.open(market, isLong, size.margin, size.leverage, openDeadline));
-      if (failed) {
-        if (TEMPORARY.has(failed.reason)) noOpenBefore = Math.max(noOpenBefore, Date.now() + BLOCKED_RETRY_MS);
-        // A short validity may not be accepted by the relayer: fall back to the frontend's one hour.
-        if ((failed.code === 'deadline_expired' || failed.code === 'invalid_intent') && openDeadline < 3600) {
-          openDeadline = 3600;
-          log('Validité courte refusée, passage à 1 h de validité pour les ouvertures.');
-        }
-        // The first leg went through alone: close it as soon as it shows up instead of waiting.
-        if (sent === 1) awaiting.orphan = true;
-        break;
-      }
-      sent++;
-      if (sent === 1) {
-        awaiting = { kind: 'open', sentAt: Date.now(), until: Date.now() + OPEN_COOLDOWN_MS };
-        // Until this order's validity runs out it can still execute, even if it is not visible yet.
-        inFlightUntil = Date.now() + openDeadline * 1000 + IN_FLIGHT_MARGIN_MS;
+    // Both legs are sent at once so that the relayer puts them in the same batch, executed at the
+    // same price. Sent one after the other, the second leg waited for the first one's answer and
+    // usually landed in a later block, at another price.
+    const legs = gate.longFirst ? [true, false] : [false, true];
+    const results = await Promise.all(legs.map((isLong) => act(`ouverture ${isLong ? 'long' : 'short'}`, () => ex.open(market, isLong, size.margin, size.leverage, openDeadline))));
+    const failures = results.filter(Boolean);
+    if (failures.length < legs.length) {
+      awaiting = { kind: 'open', sentAt: Date.now(), until: Date.now() + OPEN_COOLDOWN_MS, price };
+      // Until these orders' validity runs out they can still execute, even if not visible yet.
+      inFlightUntil = Date.now() + openDeadline * 1000 + IN_FLIGHT_MARGIN_MS;
+      // One leg went through alone: close it as soon as it shows up instead of waiting.
+      if (failures.length) awaiting.orphan = true;
+    }
+    for (const failed of failures) {
+      if (TEMPORARY.has(failed.reason)) noOpenBefore = Math.max(noOpenBefore, Date.now() + BLOCKED_RETRY_MS);
+      // A short validity may not be accepted by the relayer: fall back to the frontend's one hour.
+      if ((failed.code === 'deadline_expired' || failed.code === 'invalid_intent') && openDeadline < 3600) {
+        openDeadline = 3600;
+        log('Validité courte refusée, passage à 1 h de validité pour les ouvertures.');
       }
     }
     noOpenBefore = Math.max(noOpenBefore, Date.now() + OPEN_COOLDOWN_MS);
@@ -423,6 +424,10 @@ async function main() {
     if (awaiting && awaiting.kind === 'open') {
       if (pairs.length) {
         risk.addLatency(Date.now() - awaiting.sentAt);
+        // Shows whether both legs were filled at the same price, and how far from the price at sending.
+        const { long, short } = pairs[0];
+        const gap = Math.abs(long.entry - short.entry);
+        log(`Paire ouverte : long @ ${long.entry.toFixed(1)}, short @ ${short.entry.toFixed(1)} (${gap ? `écart ${gap.toFixed(1)} $` : 'même prix'}, envoyée @ ${awaiting.price.toFixed(1)}, visible après ${((Date.now() - awaiting.sentAt) / 1000).toFixed(0)} s)`);
         awaiting = null;
       } else if (Date.now() > awaiting.until || (awaiting.orphan && single.length) || loneFor > LONE_LEG_GRACE_MS) awaiting = null;
       else {

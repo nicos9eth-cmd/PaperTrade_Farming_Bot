@@ -204,12 +204,18 @@ Tout est aussi écrit dans `bot.log`, et chaque cycle dans `journal.csv` (ouvrab
 | `PAPER staké … minimum de 1000` | Stake du PAPER sur le site, sinon le relayer peut refuser tes ordres. |
 | `open interest … plein` / `relayer congestionné` | Normal, le bot attend tout seul. |
 | `Lecture impossible : …` puis `Lectures rétablies` | Petite coupure internet, rien à faire. |
-| `le format des ordres a changé sur le site Papertrade` | Papertrade a modifié son site : télécharge la dernière version du bot. |
+| `le format des ordres a changé sur le site Papertrade` | Papertrade a modifié son site : lance `mettre-a-jour.bat` (une version adaptée peut mettre un peu de temps à sortir). |
 | La page de `setup.bat` dit « Aucun wallet détecté » | Ouvre l'adresse affichée dans le navigateur où ton wallet est installé. |
 
 Pour retirer l'autorisation du bot : supprime `.session-key.json`, et le bot ne peut plus rien faire. La révocation complète côté Papertrade se fait avec `revokeSessionKey` depuis ton wallet.
 
 ## Mettre à jour le bot
+
+Double-clique **`mettre-a-jour.bat`**. Il télécharge la dernière version depuis GitHub et remplace les fichiers du bot. **Tes réglages (`config.json`), ta clé de session, ton budget et tes journaux sont conservés.** Si un téléchargement échoue, rien n'est modifié : relance-le plus tard.
+
+Ensuite, si le bot tournait, ferme sa fenêtre et relance `bot-live.bat` : la nouvelle version n'est utilisée qu'au redémarrage.
+
+`mettre-a-jour.bat` existe depuis la v1.6. Pour passer d'une version plus ancienne à la v1.6 (une seule fois) :
 
 1. Arrête le bot (Ctrl+C).
 2. Télécharge la nouvelle version (Code → Download ZIP) et décompresse-la dans un **nouveau** dossier.
