@@ -6,6 +6,8 @@ Bot qui farme le token PAPER sur [Papertrade](https://exchange.papertrade.xyz) t
 
 **Ce n'est pas gratuit.** Chaque cycle coûte environ 3 à 6 % du capital engagé. Le PAPER ne peut pas être vendu pour l'instant, il rapporte seulement des dividendes en USDC quand il est staké. N'utilise que de l'argent que tu acceptes de dépenser.
 
+**Outil expérimental, sans aucune garantie.** Il dépend d'une interface de Papertrade non documentée qui peut changer du jour au lendemain, et il passe des ordres avec de vrais fonds. Tu l'utilises à tes risques : tu peux perdre tout ce que tu engages, sur Papertrade comme sur Lighter. Voir `LICENSE` (MIT).
+
 **En résumé :** installer Node.js → `installer.bat` → tester avec `bot-simulation.bat` → `setup.bat` (une signature) → **`reglages.bat`** (2 questions sur ton montant et ton budget) → `bot-live.bat`.
 
 ---
