@@ -51,13 +51,21 @@ Le bot ne te demandera **jamais** ta seed ni ta clé privée. Sa clé est rangé
 
 ## 5. Régler le bot selon ton montant
 
-**Ne lance pas le bot avec les réglages par défaut** : ils sont faits pour un compte d'environ 25 $. Double-clique **`reglages.bat`**. Il lit ton solde Papertrade, te demande :
+**Ne lance pas le bot avec les réglages par défaut** : ils sont faits pour un compte d'environ 25 $. Double-clique **`reglages.bat`**. Il lit :
 
-1. combien le bot peut engager (tout le solde, ou une partie) ;
-2. quel levier : **normal** ou **prudent** (voir plus bas) ;
-3. combien tu acceptes de dépenser au total (le budget) ;
+- ton solde Papertrade et tes PAPER stakés ;
+- ton compte Lighter, s'il existe : la couverture est-elle activée, et quelle part d'une jambe peut-elle couvrir ;
+- la congestion du relayer en ce moment, et le taux de mint.
 
-puis il t'affiche le coût et le PAPER attendus par cycle et le nombre de cycles que ton budget permet, avant d'enregistrer. Relance-le quand tu déposes ou retires des fonds, ou pour remettre un budget.
+Puis il te **recommande des réglages complets pour ton solde**, en expliquant pourquoi :
+
+- le levier (**normal** ou **prudent**, voir plus bas) et le temps à partir duquel le bot attendra pendant les congestions ;
+- la couverture Lighter : complète, partielle (avec le montant à ajouter pour la compléter) ou absente ;
+- le coût et le PAPER attendus par cycle ;
+- un budget d'environ 10 cycles ;
+- le prix maximum du PAPER au-delà duquel le bot arrête d'ouvrir. Le taux de mint baisse avec le temps, donc ce prix monte : la recommandation garde de la marge.
+
+Appuie sur **Entrée** pour appliquer la recommandation, ou tape **P** pour choisir chaque réglage toi-même : montant engagé, levier, budget, prix maximum. Avant d'enregistrer, il affiche ce qui change (par exemple « Levier x61 -> x56 »). Relance-le quand tu déposes ou retires des fonds (sur Papertrade ou sur Lighter), ou pour remettre un budget.
 
 Au démarrage, `bot-live.bat` rappelle aussi ces chiffres et prévient si le budget ne couvre même pas un cycle.
 
@@ -169,6 +177,30 @@ Laisse la fenêtre noire ouverte. Pour arrêter : **Ctrl+C**, ou ferme la fenêt
 
 Tout est aussi écrit dans `bot.log`, et chaque cycle dans `journal.csv` (ouvrable avec Excel).
 
+## Couverture sur Lighter (optionnel)
+
+Le risque principal du farming : une clôture coincée de longues minutes dans la file du relayer pendant que le BTC chute ou monte d'un coup. La jambe perdante est liquidée, et l'autre reste ouverte sans couverture jusqu'à ce que sa clôture passe. Si le prix revient entre-temps, son gain fond. Ça s'est produit le 15/10 vers 4 h : un cycle a coûté 10 $ au lieu de ~1 $.
+
+Avec un compte [Lighter](https://app.lighter.xyz) (perps sans frais), le bot couvre ce cas : dès qu'une jambe Papertrade passe son prix de liquidation, ou qu'une jambe reste seule, il prend sur Lighter la position inverse de l'autre jambe en moins d'une seconde. Il la referme quand la clôture Papertrade est passée. Quand la paire est complète, il n'y a rien sur Lighter.
+
+Pour l'activer (une seule fois) :
+
+1. Il faut un compte Lighter lié au **même wallet** que Papertrade, avec des USDC dessus. 20 $ couvrent ~900 $ de position : c'est une couverture partielle pour une jambe de ~1 000 $. 50 $ couvrent une jambe entière.
+2. Il faut **Python 3** (« Python 3.13 » dans le Microsoft Store).
+3. Double-clique **`setup-lighter.bat`**. Il installe le module officiel de Lighter, puis ouvre une page où tu signes un message avec ton wallet (pas une transaction). Le message commence par « Register Lighter Account ».
+
+Ensuite, `bot-live.bat` affiche une ligne **LIGHTER** dans le tableau de bord. Sans `setup-lighter.bat`, ou si Lighter est injoignable, le bot reste uniquement sur Papertrade.
+
+À savoir :
+
+- **C'est nouveau (v1.7).** L'activation de la clé et les ordres Lighter (vente, rachat, levier) ont été testés en réel, et la couverture d'urgence a été rejouée en simulation sur la nuit du 15/10. Une vraie couverture pendant une vraie liquidation n'a pas encore eu lieu : surveille `bot.log` les premiers jours (lignes « Lighter : »).
+- **Tes propres positions sur Lighter ne sont pas touchées tant qu'il n'y a rien à couvrir.** Pendant une couverture, l'ordre du bot s'ajoute à ta position BTC (un achat de couverture réduit un short que tu as, par exemple). Si la marge manque, le bot réduit ta position BTC pour couvrir en priorité. Il ne touche jamais tes autres marchés. À la fin, il ne défait que sa propre couverture, qu'il mémorise dans `.lighter-hedge.json` (ne supprime pas ce fichier pendant une couverture).
+- Il règle le levier BTC de ce compte Lighter au maximum (x50), pour que peu de collatéral suffise.
+- Si le collatéral Lighter ne suffit pas, la couverture est partielle, et le bot la réduit si le prix part contre elle, pour ne pas se faire liquider sur Lighter.
+- Si Lighter peut couvrir une jambe entière, le bot ouvre aussi quand les clôtures sont lentes, au lieu d'attendre : le risque est couvert.
+- Le résultat sur Lighter (gain ou perte de la couverture, funding) est compté dans les cycles, la session et le budget.
+- La clé du bot est dans `.lighter-key.json` : **ne partage jamais ce fichier**. Elle peut passer des ordres et renvoyer des fonds vers ta propre adresse uniquement.
+
 ## Ce que le bot fait tout seul
 
 - Il ferme plus tôt quand le marché est agité, que la file du relayer s'allonge ou que les ordres sont lents, pour éviter la liquidation. Il n'ouvre pas de paire quand la congestion est « HIGH ».
@@ -185,7 +217,7 @@ Tout est aussi écrit dans `bot.log`, et chaque cycle dans `journal.csv` (ouvrab
 
 - **Staker le PAPER et réclamer les récompenses** : ça demande ta signature. À faire de temps en temps sur le site (onglet « Paper »).
 - **Déposer ou retirer des USDC.**
-- Empêcher toute liquidation : un mouvement très brutal ou une longue panne peut liquider la jambe perdante. Le cycle coûte alors un peu plus cher.
+- Empêcher toute liquidation : un mouvement très brutal ou une longue panne peut liquider la jambe perdante. Le cycle coûte alors un peu plus cher (moins avec la couverture Lighter).
 - Fonctionner PC éteint ou en veille.
 
 ## En cas de problème
@@ -203,6 +235,9 @@ Tout est aussi écrit dans `bot.log`, et chaque cycle dans `journal.csv` (ouvrab
 | `le budget restant couvre moins d'un cycle` | Lance `reglages.bat` pour adapter le budget à ton solde. |
 | `PAPER staké … minimum de 1000` | Stake du PAPER sur le site, sinon le relayer peut refuser tes ordres. |
 | `open interest … plein` / `relayer congestionné` | Normal, le bot attend tout seul. |
+| `Couverture Lighter désactivée : …` | La clé Lighter ne fonctionne plus (retirée sur le site Lighter, ou Python absent). Relance `setup-lighter.bat`. En attendant, le bot tourne sur Papertrade seul. |
+| `Lighter injoignable …` | Coupure côté Lighter : la couverture reprend toute seule dès que Lighter répond. |
+| `clôtures trop lentes en ce moment … même au levier minimum` | Le relayer met trop de temps à exécuter les clôtures : une paire ouverte maintenant risquerait d'être liquidée avant sa clôture. Le bot attend que ça se calme. Avec plus de capital, il peut baisser le levier au lieu d'attendre (Papertrade impose une position d'au moins 1 000 $). |
 | `Lecture impossible : …` puis `Lectures rétablies` | Petite coupure internet, rien à faire. |
 | `le format des ordres a changé sur le site Papertrade` | Papertrade a modifié son site : lance `mettre-a-jour.bat` (une version adaptée peut mettre un peu de temps à sortir). |
 | La page de `setup.bat` dit « Aucun wallet détecté » | Ouvre l'adresse affichée dans le navigateur où ton wallet est installé. |

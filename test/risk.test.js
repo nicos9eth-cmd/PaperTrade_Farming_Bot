@@ -49,4 +49,14 @@ t = tracker();
 now = feed(t, 0.01);
 assert.strictEqual(t.assess(BUST, config, now).closeAt, 0.5);
 
-console.log(`risk: ok (calme 0.85, volatil ${volatile.toFixed(2)}, congestionné ${congested.toFixed(2)})`);
+// Distance to liquidation a new pair needs. Calm market, quick orders: about 0.1 %, no constraint at x60-x80.
+t = tracker();
+now = feed(t, 0.00005);
+const calmBust = t.minBustMove(config, now);
+assert.ok(calmBust > 0.0005 && calmBust < 0.004, `calm minBust ${calmBust}`);
+// The night of 2026-10-15: 1568 s of relayer backlog. About 2.2 % is needed, i.e. x45 at most.
+t.setQueueDelay(1568);
+const nightBust = t.minBustMove(config, now);
+assert.ok(nightBust > 0.02 && nightBust < 0.024, `night minBust ${nightBust}`);
+
+console.log(`risk: ok (calme 0.85, volatil ${volatile.toFixed(2)}, congestionné ${congested.toFixed(2)} ; distance minimale à l'ouverture : calme ${(calmBust * 100).toFixed(2)} %, nuit du 15/10 ${(nightBust * 100).toFixed(2)} %)`);

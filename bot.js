@@ -16,6 +16,8 @@ const changes = require('./lib/changes');
 const { buildPairs, pairStatus } = require('./lib/pairs');
 const { mintRate, pairOutcome } = require('./lib/economics');
 const { sizePair, cycleRange } = require('./lib/sizing');
+const lighterLib = require('./lib/lighter');
+const hedge = require('./lib/hedge');
 let config;
 try {
   config = require('./lib/config').load();
@@ -122,6 +124,26 @@ async function main() {
     ex = exchange.simulated(config, mkts, capital, () => proto);
   }
 
+  // Cross-DEX hedge on Lighter, set up by setup-lighter.bat. Without it the bot stays on Papertrade
+  // alone. In simulation the Lighter account is simulated too, on its real collateral.
+  let lt = null;
+  const lkey = lighterLib.loadKey();
+  if (lkey) {
+    if (LIVE) {
+      lt = lighterLib.live(lkey);
+      try {
+        await lt.init();
+      } catch (e) {
+        log(`Couverture Lighter désactivée : ${e.message}. Relance setup-lighter.bat si ça persiste.`);
+        lt.stop();
+        lt = null;
+      }
+    } else {
+      const real = await lighterLib.account(lkey.account_index).catch(() => null);
+      lt = real ? lighterLib.simulated(real.collateral, real.base, real.entry) : lighterLib.simulated(20);
+    }
+  }
+
   let state = await ex.state();
   let stateAt = Date.now();
   if (LIVE && state.keyExpiry * 1000 < Date.now() + 2 * 3600e3) throw new Error('Clé de session absente ou expirée côté Papertrade : relance setup.bat');
@@ -158,10 +180,33 @@ async function main() {
   let waitReason = null;
   let lastLoopError = null;
   let tick = 0;
+  const busts = hedge.bustTracker();
+  let lighterView = null; // last Lighter reading, for the dashboard and the opening check
+  let hedgeBusy = false;
+  let hedgeRetryAt = 0;
+  let imbalanceSince = 0;
+  let partialLogged = false;
+  let lighterError = null;
+  let lighterStart = null; // Lighter equity when the bot started: its change counts in the results
+  // Part of the Lighter BTC position opened by the bot (the rest is the owner's), on disk in live mode.
+  let own = LIVE ? lighterLib.loadOwn() : 0;
+  let pendingFill = null; // { before, baseline } until the reading after an order
+  const setOwn = (v) => {
+    own = Math.round(v * 1e5) / 1e5 || 0;
+    if (LIVE) lighterLib.saveOwn(own);
+  };
+  // Papertrade realised PnL plus what the Lighter account gained or lost since the bot started
+  // (deposits or withdrawals on Lighter while the bot runs would show here too).
+  const realizedAll = () => state.realized + (lighterView && lighterStart !== null ? lighterView.equity - lighterStart : 0);
 
   log(version.build ? `Version du site détectée : ${version.build}` : `Version du site introuvable, utilisation de ${config.build} (config.json)`);
   log(`Mode ${ex.name} | disponible ${usd(state.available)} | ${state.positions.length} position(s) ouverte(s) | mint ${mintRate(proto.paper).toFixed(2)} PAPER/$`);
   if (LIVE && Math.abs(budgetFrom - state.realized) > 0.005) log(`Budget repris d'un lancement précédent : ${usd(budgetFrom - state.realized)} déjà dépensés sur ${usd(config.maxNetLossUsd)}`);
+  if (lt) {
+    const l = await lt.state().catch(() => null);
+    const mine = l && Math.abs(l.base - own) >= 1e-5 ? ` Ta position BTC manuelle (${l.base - own > 0 ? 'long' : 'short'} ${Math.abs(l.base - own).toFixed(5)} BTC) est conservée ; elle ne sera réduite que si une couverture a besoin de sa marge.` : '';
+    log(`Couverture Lighter active (${lt.name}, compte ${lkey.account_index}${l ? `, collatéral ${usd(l.equity)}` : ''}).${mine}`);
+  } else log('Pas de couverture Lighter : le bot reste uniquement sur Papertrade.');
   if (SCREEN) process.stdout.write('\x1b[2J');
 
   const stop = (reason) => {
@@ -211,11 +256,11 @@ async function main() {
   };
 
   const recordCycle = (price) => {
-    const pnl = state.realized - last.realized;
+    const pnl = realizedAll() - last.realized;
     const paper = state.paper - last.paper;
-    last = { realized: state.realized, paper: state.paper };
+    last = { realized: realizedAll(), paper: state.paper };
     cycles++;
-    const spent = start.realized - state.realized;
+    const spent = start.realized - realizedAll();
     const total = state.paper - start.paper;
     log(`Cycle terminé : PnL ${usd(pnl)}, +${Math.round(paper)} PAPER${paper > 0 ? `, $${(-pnl / paper).toFixed(4)} par PAPER` : ''} | cumul : coût ${usd(spent)}, ${Math.round(total)} PAPER`);
     journal([new Date().toISOString(), price.toFixed(1), pnl.toFixed(4), paper.toFixed(2), paper > 0 ? (-pnl / paper).toFixed(5) : '', spent.toFixed(4), total.toFixed(2)]);
@@ -224,7 +269,7 @@ async function main() {
   const openPair = async (price) => {
     const market = btc();
     if (!market) return wait('marché BTC introuvable');
-    const size = sizePair(state.available, mkts, market, config);
+    const size = sizePair(state.available, mkts, market, config, risk.minBustMove(config));
     if (size.reason) {
       // The balance may simply not be credited yet after a close: only give up if it lasts.
       lowBalanceSince = lowBalanceSince || Date.now();
@@ -233,13 +278,20 @@ async function main() {
     }
     lowBalanceSince = 0;
     const notional = size.margin * size.leverage;
+    // Orders are slow to land: even the lowest leverage allowed would leave too little room
+    // to close before liquidation. This clears by itself when the relayer catches up, and does
+    // not apply when Lighter can hold the whole of a leg should the other one be liquidated.
+    const covered = lt && lighterView && !lighterError && lighterView.capacityUsd >= notional;
+    if (size.tooSlow && !covered) return wait(`clôtures trop lentes en ce moment (délai estimé ${Math.round(risk.assess(1, config).delay)} s) même au levier minimum x${size.leverage}`);
     const gate = admission(mkts, market, price, notional);
     if (gate.wait) return wait(gate.wait);
     waitReason = null;
     const expected = pairOutcome({ notional, move: size.bustMove * config.closeAt, market, paper: proto.paper, queueEmpty: proto.queueEmpty });
     if (config.maxCostPerPaper && expected.costPerPaper > config.maxCostPerPaper)
       return stop(`coût attendu $${expected.costPerPaper.toFixed(4)} par PAPER au-dessus du plafond $${config.maxCostPerPaper}`);
-    log(`Ouverture paire BTC @ ${price.toFixed(1)} : ${usd(size.margin)} x${size.leverage} par jambe, clôture visée à ${pct(size.bustMove * config.closeAt)} (attendu : coût ${usd(expected.cost)}, ~${Math.round(expected.minted)} PAPER)`);
+    const slow = `clôtures lentes, délai estimé ${Math.round(risk.assess(1, config).delay)} s`;
+    const lowered = size.tooSlow ? ` (${slow}, couvert par Lighter)` : size.leverage < size.usual ? ` (levier abaissé de x${size.usual} : ${slow})` : '';
+    log(`Ouverture paire BTC @ ${price.toFixed(1)} : ${usd(size.margin)} x${size.leverage} par jambe${lowered}, clôture visée à ${pct(size.bustMove * config.closeAt)} (attendu : coût ${usd(expected.cost)}, ~${Math.round(expected.minted)} PAPER)`);
     status = 'Ouverture de la paire';
     // Both legs are sent at once so that the relayer puts them in the same batch, executed at the
     // same price. Sent one after the other, the second leg waited for the first one's answer and
@@ -285,12 +337,64 @@ async function main() {
           pressure: relayer.current(),
           status,
           stopReason,
+          lighter: lt ? lighterView : null,
           events,
-          totals: { cycles, spent: start.realized - state.realized, paper: state.paper - start.paper, budgetSpent: budgetFrom - state.realized },
+          totals: { cycles, spent: start.realized - realizedAll(), paper: state.paper - start.paper, budgetSpent: budgetFrom - realizedAll() },
         })
       );
     } catch (e) {
       status = `Affichage impossible : ${e.message}`;
+    }
+  };
+
+  // Keeps the Lighter BTC position opposite to the net Papertrade exposure (lib/hedge.js). Runs in
+  // the background, one at a time: a Lighter order never delays a Papertrade close, and a Lighter
+  // failure never stops the Papertrade side.
+  const hedgeTick = async (price, positions) => {
+    const l = await lt.state();
+    const capacity = (Math.max(0, l.equity) * lighterLib.MAX_LEVERAGE * 0.9) / price;
+    if (lighterStart === null) lighterStart = l.equity;
+    if (lighterError) log('Lighter de nouveau joignable.');
+    lighterError = null;
+    // The last order's fill, read from the position change: the new position minus the owner's
+    // part is the bot's. A refused order changes nothing.
+    if (pendingFill && Date.now() >= hedgeRetryAt) {
+      if (Math.abs(l.base - pendingFill.before) > 1e-6) setOwn(l.base - pendingFill.baseline);
+      pendingFill = null;
+    }
+    // Nothing left on the account: nothing of the bot's either (the owner may have closed it all).
+    if (!pendingFill && !l.base && own) setOwn(0);
+    lighterView = { ...l, own, capacityUsd: capacity * price };
+    if (pendingFill) return;
+    const p = hedge.plan({ positions, busted: busts, current: l.base, own, price, capacity, minTrade: 10 });
+    if (!p.order) {
+      imbalanceSince = 0;
+      partialLogged = false;
+      return;
+    }
+    // While a pair is being opened, a lone leg can be the first half of it: its twin gets the same
+    // grace as for the lone-leg close. Anything else (a liquidated leg, unwinding) is acted on at once.
+    imbalanceSince = imbalanceSince || Date.now();
+    const opening = (awaiting && awaiting.kind === 'open') || Date.now() < inFlightUntil;
+    if (!p.reduceOnly && opening && !busts.size && Date.now() - imbalanceSince < LONE_LEG_GRACE_MS) return;
+    if (Date.now() < hedgeRetryAt) return;
+    if (p.partial && !partialLogged) {
+      log(`Lighter : collatéral insuffisant pour tout couvrir, couverture partielle de ${usd(Math.abs(p.hedge) * price)} sur ${usd(Math.abs(p.need) * price)}.`);
+      partialLogged = true;
+    }
+    const btc = (x) => (x ? `${x > 0 ? 'long' : 'short'} ${Math.abs(x).toFixed(5)} BTC` : 'rien');
+    const why = !p.need ? 'fin de la couverture' : busts.size ? 'une jambe Papertrade a passé son prix de liquidation' : 'jambe Papertrade sans sa jumelle';
+    const cut = Math.abs(p.baseline) < Math.abs(l.base - own) - 1e-6 ? `, ta position BTC manuelle réduite à ${btc(p.baseline)} pour libérer de la marge` : '';
+    log(`Lighter : ${p.order > 0 ? 'achat' : 'vente'} de ${Math.abs(p.order).toFixed(5)} BTC (~${usd(Math.abs(p.order) * price)}), ${why}. Couverture du bot : ${btc(p.hedge)}${cut}.`);
+    // Lighter fills or refuses within a second; the next reading shows which.
+    hedgeRetryAt = Date.now() + 5000;
+    pendingFill = { before: l.base, baseline: p.baseline };
+    try {
+      await lt.trade(p.order, p.reduceOnly);
+    } catch (e) {
+      log(`Lighter : ordre refusé (${e.message}), nouvel essai dans 15 s.`);
+      hedgeRetryAt = Date.now() + 15000;
+      pendingFill = null;
     }
   };
 
@@ -340,11 +444,16 @@ async function main() {
 
   const step = async () => {
     tick++;
+    // The live account is read at the same time as the price. The simulated one depends on the
+    // price (liquidations), so it is read after it.
+    const early = LIVE ? ex.state().then((s) => ({ s }), (e) => ({ e })) : null;
     const price = await api.hlMid('BTC');
     ex.onPrice(price);
     risk.addPrice(price);
     try {
-      const fresh = await ex.state();
+      const got = early ? await early : { s: await ex.state() };
+      if (got.e) throw got.e;
+      const fresh = got.s;
       const current = fresh.lag * 1000 <= STALE_STATE_MS;
       // An occasional snapshot is minutes old: keep the previous one unless it has aged too.
       if (current || Date.now() - stateAt > STALE_STATE_MS) state = fresh;
@@ -358,7 +467,19 @@ async function main() {
     if (tick % SITE_CHECK_TICKS === 0) refreshSite();
 
     const stateStale = Date.now() - stateAt > STALE_STATE_MS;
-    const { pairs, single } = buildPairs(state.positions.filter((p) => p.market && p.market.coin === 'BTC'));
+    const btcPositions = state.positions.filter((p) => p.market && p.market.coin === 'BTC');
+    const { pairs, single } = buildPairs(btcPositions);
+    busts.update(btcPositions, price);
+    if (lt && !hedgeBusy) {
+      if (lt.onPrice) lt.onPrice(price);
+      hedgeBusy = true;
+      hedgeTick(price, btcPositions)
+        .catch((e) => {
+          if (!lighterError) log(`Lighter injoignable (${e.message}), la couverture reprendra dès que possible.`);
+          lighterError = e.message;
+        })
+        .finally(() => (hedgeBusy = false));
+    }
     const open = [...single, ...pairs.flatMap((p) => [p.long, p.short])];
     const load = relayer.current();
     risk.setQueueDelay(load ? Math.max(0, load.clearSeconds - 3) : UNKNOWN_QUEUE_DELAY_S);
@@ -475,11 +596,17 @@ async function main() {
       return;
     }
     if (stopReason) {
+      // Leave only once Lighter is flat too (the hedge tick closes it when Papertrade is flat).
+      if (lt && (!lighterView || Math.abs(own) >= 1e-5)) {
+        status = 'Arrêt en cours : fermeture de la couverture Lighter';
+        return;
+      }
       log(`Bot arrêté : ${stopReason}.`);
       draw(price, pairs, single);
+      if (lt) lt.stop();
       process.exit(0);
     }
-    const spent = budgetFrom - state.realized;
+    const spent = budgetFrom - realizedAll();
     if (config.maxNetLossUsd && spent >= config.maxNetLossUsd)
       stop(`budget atteint (${usd(spent)} dépensés sur ${usd(config.maxNetLossUsd)}) ; pour repartir, change maxNetLossUsd dans config.json`);
     else if (mintRate(proto.paper) < config.minMintRate) stop(`taux de mint ${mintRate(proto.paper).toFixed(2)} sous le plancher ${config.minMintRate}`);

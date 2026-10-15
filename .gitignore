@@ -6,3 +6,9 @@ partage/
 .budget.json
 .site-snapshot.json
 nouveautes-papertrade.txt
+.lighter-key.json
+.lighter-key.json.tmp
+.venv-lighter/
+__pycache__/
+.lighter-hedge.json
+.lighter-hedge.json.tmp

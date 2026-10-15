@@ -5,7 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const FILES = ['bot.js', 'watch.js', 'setup.js', 'configure.js', 'share.js', 'update.js', 'package.json', 'package-lock.json', 'README.md', '.gitignore'];
+const FILES = ['bot.js', 'watch.js', 'setup.js', 'configure.js', 'share.js', 'update.js', 'setup-lighter.js', 'package.json', 'package-lock.json', 'README.md', '.gitignore'];
 const DIRS = ['lib', 'test'];
 const BATS = fs.readdirSync(__dirname).filter((f) => f.endsWith('.bat'));
 const out = path.join(__dirname, 'partage', 'PaperTradeBot');
@@ -15,7 +15,8 @@ fs.mkdirSync(out, { recursive: true });
 for (const f of [...FILES, ...BATS]) if (fs.existsSync(path.join(__dirname, f))) fs.copyFileSync(path.join(__dirname, f), path.join(out, f));
 for (const d of DIRS) {
   fs.mkdirSync(path.join(out, d));
-  for (const f of fs.readdirSync(path.join(__dirname, d))) fs.copyFileSync(path.join(__dirname, d, f), path.join(out, d, f));
+  // Files only: Python leaves a __pycache__ folder next to lib/lighter_bridge.py.
+  for (const f of fs.readdirSync(path.join(__dirname, d), { withFileTypes: true })) if (f.isFile()) fs.copyFileSync(path.join(__dirname, d, f.name), path.join(out, d, f.name));
 }
 // The copy gets the documented default settings, never the owner's (wallet, budget, leverage).
 const { DEFAULTS } = require('./lib/config');
