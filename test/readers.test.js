@@ -4,9 +4,9 @@
 // and the report of what a site update changed.
 
 const assert = require('assert');
-const { parsePosition } = require('../lib/api');
+const { parsePosition, parsePaperPrice } = require('../lib/api');
 const { summarize } = require('../lib/pressure');
-const { oiRoom, poolText, render } = require('../lib/dashboard');
+const { oiRoom, poolText, render, paperUsd } = require('../lib/dashboard');
 const { compare } = require('../lib/changes');
 
 const e18 = (x) => (BigInt(Math.round(x * 1e6)) * 10n ** 12n).toString();
@@ -78,6 +78,23 @@ const screen = render({
 });
 assert.ok(screen.includes('FENÊTRE OUVERTE') && screen.includes('couverture réactive : long 0.00600 BTC') && screen.includes('résultat de la couverture réactive') && /\$0[.,]12/.test(screen));
 
+// PAPER's pre-market price on Hyperliquid (para:PAPER): the bag and what the session farmed, in dollars.
+assert.strictEqual(parsePaperPrice({ 'para:PAPER': '0.029078', 'para:BTCD': '60.7' }), 0.029078);
+assert.strictEqual(parsePaperPrice({ 'para:BTCD': '60.7' }), null);
+assert.strictEqual(parsePaperPrice({ 'para:PAPER': '0' }), null);
+assert.strictEqual(parsePaperPrice({ 'para:PAPER': 'abc' }), null);
+assert.strictEqual(parsePaperPrice(null), null);
+assert.strictEqual(paperUsd(0.029078), '$0,0291');
+assert.strictEqual(paperUsd(1.234), '$1,23');
+const ansi = (s) => s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').replace(/[  ]/g, ' ');
+const base = { live: false, startedAt: Date.now(), price: 80030, proto: { queueEmpty: true, window: false, paper: { ...tail, lp: 4.86e6 } }, mkts: {}, market: BTCm, state: { available: 1, locked: 99, queued: 0, paper: 1000, paperStaked: 1000, paperWallet: 0, realized: -5 }, pairs: [], single: [], config: { closeAt: 0.85 }, closeAt: 0.85, status: '', events: [], totals: { cycles: 1, spent: 5, paper: 1600, budgetSpent: 5 } };
+const priced = ansi(render({ ...base, paperPrice: 0.0294 }));
+assert.ok(priced.includes('prix $0,0294 (pré-marché para:PAPER sur Hyperliquid)'), priced);
+assert.ok(priced.includes('ton sac 1 000 PAPER ≈ $29,40'), priced);
+assert.ok(priced.includes('farmé depuis le lancement : 1 600 PAPER ≈ $47,04 pour $5,00 de coût (gain estimé $42,04)'), priced);
+const unpriced = ansi(render({ ...base, paperPrice: null }));
+assert.ok(unpriced.includes('prix du PAPER indisponible') && !unpriced.includes('≈'), unpriced);
+
 // Site update report.
 const before = { texts: { 'Close position': 'trade', 'Old banner text': 'app' }, modules: { trade: 'a', app: 'b' }, params: { 'BTC levier max': 1000 } };
 const after = { texts: { 'Close position': 'trade', 'New mint window': 'paper' }, modules: { trade: 'a', app: 'c', paper: 'd' }, params: { 'BTC levier max': 500 } };
@@ -90,4 +107,4 @@ assert.strictEqual(d.lines[d.lines.length - 1], 'Format des ordres inchangé : l
 assert.ok(/ATTENTION/.test(compare(before, before, false).lines.join('\n')));
 assert.strictEqual(compare(before, before, null).lines[0], 'Aucun changement visible : correctifs internes ou réglages techniques.');
 
-console.log('readers: ok (lignes de position, congestion du relayer, place en open interest, rapport des nouveautés)');
+console.log('readers: ok (lignes de position, congestion du relayer, place en open interest, rapport des nouveautés, prix du PAPER et valeur du sac)');

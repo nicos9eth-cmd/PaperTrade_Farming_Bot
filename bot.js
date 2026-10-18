@@ -59,6 +59,7 @@ const UNKNOWN_QUEUE_DELAY_S = 5; // assumed relayer backlog when the congestion 
 const MAX_ERRORS = 5;
 const REFRESH_TICKS = 15;
 const SITE_CHECK_TICKS = 300;
+const PAPER_PRICE_STALE_MS = 10 * 60000; // an older PAPER price is not shown
 // Refusals that only mean "not now": the bot waits and retries instead of counting an error.
 const TEMPORARY = new Set(['openInterest', 'tradingPaused', 'marketPaused', 'funding']);
 
@@ -227,10 +228,23 @@ async function main() {
   // Papertrade realised PnL plus what the Lighter account gained or lost since the bot started
   // (deposits or withdrawals on Lighter while the bot runs would show here too).
   const realizedAll = () => state.realized + (lighterView && lighterStart !== null ? lighterView.equity - lighterStart : 0);
+  // PAPER's pre-market price (lib/api.js), for display only: no decision depends on it.
+  let paperPx = null;
+  let paperPxAt = 0;
+  const paperPrice = () => (Date.now() - paperPxAt < PAPER_PRICE_STALE_MS ? paperPx : null);
+  const refreshPaperPrice = () =>
+    api
+      .paperPrice()
+      .then((px) => {
+        if (px) (paperPx = px), (paperPxAt = Date.now());
+      })
+      .catch(() => {});
+  await refreshPaperPrice();
 
   log(version.build ? `Version du site détectée : ${version.build}` : `Version du site introuvable, utilisation de ${config.build} (config.json)`);
   log(`Mode ${ex.name} | disponible ${usd(state.available)} | ${state.positions.length} position(s) ouverte(s) | mint ${mintRate(proto.paper).toFixed(2)} PAPER/$`);
   if (dashboard.poolText(proto)) log(`${dashboard.poolText(proto)}${SIM_WINDOW ? ' (simulée : --simuler-fenetre)' : ''}`);
+  log(paperPx ? `Prix du PAPER : ${dashboard.paperUsd(paperPx)} (pré-marché para:PAPER sur Hyperliquid) ; ton sac de ${Math.round(state.paper)} PAPER vaut ~${usd(state.paper * paperPx)}.` : 'Prix du PAPER indisponible pour l\'instant (pré-marché para:PAPER sur Hyperliquid).');
   if (LIVE && Math.abs(budgetFrom - state.realized) > 0.005) log(`Budget repris d'un lancement précédent : ${usd(budgetFrom - state.realized)} déjà dépensés sur ${usd(config.maxNetLossUsd)}`);
   if (lt) {
     const l = await lt.state().catch(() => null);
@@ -295,7 +309,9 @@ async function main() {
     const total = state.paper - start.paper;
     const scalpPart = config.lighterScalp && lt ? ` | couverture réactive Lighter ${usd(scalpBook.pnl - scalpAtCycle)} (cumul ${usd(scalpBook.pnl)})` : '';
     scalpAtCycle = scalpBook.pnl;
-    log(`Cycle terminé : PnL ${usd(pnl)}, +${Math.round(paper)} PAPER${paper > 0 ? `, $${(-pnl / paper).toFixed(4)} par PAPER` : ''} | cumul : coût ${usd(spent)}, ${Math.round(total)} PAPER${scalpPart}`);
+    const px = paperPrice();
+    const worth = px && paper > 0 ? ` (~${usd(paper * px)} au prix de ${dashboard.paperUsd(px)})` : '';
+    log(`Cycle terminé : PnL ${usd(pnl)}, +${Math.round(paper)} PAPER${worth}${paper > 0 ? `, $${(-pnl / paper).toFixed(4)} par PAPER` : ''} | cumul : coût ${usd(spent)}, ${Math.round(total)} PAPER${px ? ` (~${usd(total * px)})` : ''}${scalpPart}`);
     journal([new Date().toISOString(), price.toFixed(1), pnl.toFixed(4), paper.toFixed(2), paper > 0 ? (-pnl / paper).toFixed(5) : '', spent.toFixed(4), total.toFixed(2)]);
   };
 
@@ -383,6 +399,7 @@ async function main() {
           status,
           stopReason,
           lighter: lt ? lighterView : null,
+          paperPrice: paperPrice(),
           events,
           totals: { cycles, spent: start.realized - realizedAll(), paper: state.paper - start.paper, budgetSpent: budgetFrom - realizedAll() },
         })
@@ -582,6 +599,7 @@ async function main() {
     if (tick % REFRESH_TICKS === 0) refreshMarkets();
     if (tick % PROTO_TICKS === 0 || proto.paper.lp < NEAR_CLIFF * proto.paper.threshold) refreshProto();
     if (tick % SITE_CHECK_TICKS === 0) refreshSite();
+    if (tick % REFRESH_TICKS === 0) refreshPaperPrice();
 
     const stateStale = Date.now() - stateAt > STALE_STATE_MS;
     const btcPositions = state.positions.filter((p) => p.market && p.market.coin === 'BTC');
@@ -702,7 +720,7 @@ async function main() {
       status = 'Surveillance de la paire';
       if (!SCREEN && tick % Math.max(1, Math.round(60 / config.pollSeconds)) === 0) {
         const s = pairStatus(pairs[0], price, proto);
-        log(`BTC ${price.toFixed(1)} | paire ${usd(s.loser.margin)} x${s.loser.leverage} | mouvement ${pct(s.move)} / ${pct(s.bustMove)} (${Math.round(s.progress * 100)}%) | seuil ${Math.round(closeAtFor(s) * 100)}% | mint ${mintRate(proto.paper).toFixed(2)}`);
+        log(`BTC ${price.toFixed(1)} | paire ${usd(s.loser.margin)} x${s.loser.leverage} | mouvement ${pct(s.move)} / ${pct(s.bustMove)} (${Math.round(s.progress * 100)}%) | seuil ${Math.round(closeAtFor(s) * 100)}% | mint ${mintRate(proto.paper).toFixed(2)}${paperPrice() ? ` | PAPER ${dashboard.paperUsd(paperPrice())}` : ''}`);
       }
       return;
     }

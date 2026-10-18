@@ -180,6 +180,7 @@ Laisse la fenêtre noire ouverte. Pour arrêter : **Ctrl+C**, ou ferme la fenêt
 - **MARCHÉ** : prix du BTC, taux de mint (PAPER gagné par dollar perdu), LP de Papertrade face au seuil de 2 M $ (« FENÊTRE OUVERTE » en vert quand il est passé dessous) et place libre dans l'open interest. Si un côté affiche « PLEIN », le bot attend avant d'ouvrir.
 - **RELAYER** : la congestion chez Papertrade (les mêmes chiffres que l'onglet Status du site).
 - **COMPTE** : ton solde disponible, ta marge engagée et ton PAPER.
+- **PAPER** : le prix du PAPER, ce que vaut ton PAPER, et ce que vaut le PAPER farmé depuis le lancement face à ce qu'il a coûté (« gain estimé »). Le prix vient du marché en pré-lancement `para:PAPER` sur Hyperliquid, ouvert le 18/10/2026 alors que le token n'est pas encore transférable. C'est une estimation qui peut beaucoup bouger, pas un prix auquel tu peux vendre. Le bot ne s'en sert que pour l'affichage : aucune décision n'en dépend. Il est relu toutes les 30 s ; s'il n'a pas pu être lu depuis 10 min, la ligne affiche « prix du PAPER indisponible ».
 - **PAIRE** : la paire en cours. La jauge avance vers la liquidation ; le `|` marque l'endroit où le bot ferme.
 - **SESSION** : cycles, coût total, PAPER gagné et prix de revient depuis le lancement.
 - **ÉTAT** : ce que le bot fait, ou pourquoi il attend.
@@ -286,6 +287,7 @@ Avec `"lighterScalp": true` (ou la question 5 de `reglages.bat`, en mode P), le 
 | `Lighter injoignable …` | Coupure côté Lighter : la couverture reprend toute seule dès que Lighter répond. |
 | `clôtures trop lentes en ce moment … même au levier minimum` | Le relayer met trop de temps à exécuter les clôtures : une paire ouverte maintenant risquerait d'être liquidée avant sa clôture. Le bot attend que ça se calme. Avec plus de capital, il peut baisser le levier au lieu d'attendre (Papertrade impose une position d'au moins 1 000 $). |
 | `Lecture impossible : …` puis `Lectures rétablies` | Petite coupure internet, rien à faire. |
+| `prix du PAPER indisponible` | Hyperliquid ne répond pas, ou le marché `para:PAPER` a été retiré. Seul l'affichage est touché : le bot farme normalement. |
 | `… -> HTTP 429` | Papertrade limite le nombre de connexions par connexion internet, et les onglets Papertrade ouverts dans ton navigateur comptent aussi. Le bot garde une seule connexion ouverte vers ton compte et patiente de plus en plus longtemps (jusqu'à 30 s) avant de réessayer. Si ça dure, ferme les onglets Papertrade en trop. |
 | `le format des ordres a changé sur le site Papertrade` | Papertrade a modifié son site : lance `mettre-a-jour.bat` (une version adaptée peut mettre un peu de temps à sortir). |
 | La page de `setup.bat` dit « Aucun wallet détecté » | Ouvre l'adresse affichée dans le navigateur où ton wallet est installé. |
