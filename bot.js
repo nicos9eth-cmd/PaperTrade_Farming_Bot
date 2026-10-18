@@ -420,6 +420,12 @@ async function main() {
       const { pairs: complete } = buildPairs(positions);
       const pair = complete.length === 1 && !busts.size && !(awaiting && awaiting.kind === 'close') ? complete[0] : null;
       const s = pair && pairStatus(pair, price, proto);
+      // A complete pair needs no hedge: what the bot holds on Lighter then is the overlay, including
+      // one left by a previous run, which a restart must not unwind and take again.
+      if (pair && !scalpHeld && own) {
+        scalpHeld = own;
+        log(`Scalp Lighter : position du bot reprise (${own > 0 ? 'long' : 'short'} ${Math.abs(own).toFixed(5)} BTC).`);
+      }
       const r = scalp.target({
         pair,
         price,

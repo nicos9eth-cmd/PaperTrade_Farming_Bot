@@ -74,6 +74,11 @@ for (let i = 0; i <= 60; i++) t.addPrice(80000 - i * 4, i * 2000);
 for (let i = 1; i <= 30; i++) t.addPrice(79760 + i * 4, 120000 + i * 2000);
 tr = t.trend(60000, 180000);
 assert.ok(tr.er > 0.99 && tr.net > 0, JSON.stringify(tr));
-assert.deepStrictEqual(tracker().trend(60000, 0), { er: 0, net: 0 });
+assert.strictEqual(tr.seconds, 60); // span of the samples the measure rests on
+assert.deepStrictEqual(tracker().trend(60000, 0), { er: 0, net: 0, seconds: 0 });
+// Right after a start, the window holds only a few seconds of prices.
+t = tracker();
+for (let i = 0; i <= 3; i++) t.addPrice(80000 - i * 10, i * 2000);
+assert.strictEqual(t.trend(120000, 6000).seconds, 6);
 
 console.log(`risk: ok (calme 0.85, volatil ${volatile.toFixed(2)}, congestionné ${congested.toFixed(2)} ; distance minimale à l'ouverture : calme ${(calmBust * 100).toFixed(2)} %, nuit du 15/10 ${(nightBust * 100).toFixed(2)} %)`);

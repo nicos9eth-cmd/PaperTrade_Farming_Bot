@@ -5,7 +5,7 @@
 
 const assert = require('assert');
 const { tracker } = require('../lib/risk');
-const { target, ledger, MIN_HOLD_MS } = require('../lib/scalp');
+const { target, ledger, MIN_HOLD_MS, MIN_TREND_S } = require('../lib/scalp');
 
 const CALM = 0.02 / Math.sqrt(86400);
 const ENTRY = 80000;
@@ -66,6 +66,15 @@ assert.strictEqual(held.overlay, 0); // the trend is against the side held: noth
 const turned = target({ pair, price: ENTRY - 240, now: 60000, vol: CALM, trend: t.trend(120000, 60000), closeMove, capBtc: 1, current: 0.05, state: { side: 1, since: 0 } });
 assert.strictEqual(turned.state.side, -1);
 assert.ok(turned.overlay < 0);
+
+// Seen live on 2026-10-18: 7 s after a restart, 4 prices in a row going down read as a "100 %"
+// trend. Until the trend rests on MIN_TREND_S of prices, the overlay held is kept as it is.
+const fresh = tracker();
+for (let i = 0; i <= 3; i++) fresh.addPrice(ENTRY - 200 - i * 10, i * 2000);
+const early = (current) => target({ pair, price: ENTRY - 230, now: 6000, vol: CALM, trend: fresh.trend(120000, 6000), closeMove, capBtc: 1, current });
+assert.strictEqual(early(0).overlay, 0); // no short taken on 6 s of prices
+assert.strictEqual(early(-0.00141).overlay, -0.00141); // the short held before the restart is kept
+assert.ok(MIN_TREND_S >= 20 && MIN_TREND_S <= 60);
 
 // Capped by what the Lighter collateral may carry on its own.
 r = run([ENTRY, ...line(ENTRY, ENTRY * 1.006, 150)], { capBtc: 0.02 });
