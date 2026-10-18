@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('assert');
-const { buildPairs, pairStatus } = require('../lib/pairs');
+const { buildPairs, pairStatus, entryGap } = require('../lib/pairs');
 
 const BTC = { id: 1, coin: 'BTC', baseRate: 0.1, rateMultiplier: 15000, positionMultiplier: 814.598, referenceNotional: 100000 };
 const ETH = { ...BTC, id: 2, coin: 'ETH' };
@@ -53,4 +53,14 @@ s = pairStatus(skewed, 80020, proto);
 assert.strictEqual(s.loser.id, 'L');
 near(s.move, 80 / 80100, 1e-12);
 
-console.log('pairs: ok (appariement à 1 % près, jambe perdante mesurée depuis sa propre entrée)');
+// Legs filled at two prices (2026-10-18 21:58: long 80873.5, short 80853.5, $1009 a leg): the gap is
+// lost whatever the price does, here ~$0.25 on top of the cycle's cost. A long under the short gains it.
+const gap = entryGap({ long: { entry: 80873.5, notional: 1009.12 }, short: { entry: 80853.5, notional: 1009.12 } });
+near(gap.gap, 20, 1e-9);
+near(gap.cost, (20 * 1009.12) / 80863.5, 1e-9);
+assert.ok(gap.cost > 0.24 && gap.cost < 0.26);
+const better = entryGap({ long: { entry: 80853.5, notional: 1000 }, short: { entry: 80873.5, notional: 1000 } });
+assert.ok(better.gap === -20 && better.cost < 0);
+assert.deepStrictEqual(entryGap({ long: { entry: 80000, notional: 1000 }, short: { entry: 80000, notional: 1000 } }), { gap: 0, cost: 0 });
+
+console.log("pairs: ok (appariement à 1 % près, jambe perdante mesurée depuis sa propre entrée, coût d'un écart d'entrée)");

@@ -13,7 +13,7 @@ const { tracker } = require('./lib/risk');
 const pressure = require('./lib/pressure');
 const site = require('./lib/site');
 const changes = require('./lib/changes');
-const { buildPairs, pairStatus } = require('./lib/pairs');
+const { buildPairs, pairStatus, entryGap } = require('./lib/pairs');
 const { mintRate, pairOutcome } = require('./lib/economics');
 const { sizePair, cycleRange } = require('./lib/sizing');
 const lighterLib = require('./lib/lighter');
@@ -61,6 +61,7 @@ const MAX_ERRORS = 5;
 const REFRESH_TICKS = 15;
 const SITE_CHECK_TICKS = 300;
 const PAPER_PRICE_EVERY_MS = 30000;
+const WAIT_RELOG_MS = 10 * 60000; // a wait already logged this recently is not logged again
 const PAPER_PRICE_STALE_MS = 10 * 60000; // an older PAPER price is not shown
 // Latest published version. Timed by the clock, not in ticks: a tick lasts pollSeconds plus the step
 // itself, so 900 ticks took ~45 min. GitHub allows 60 unauthenticated reads an hour per address.
@@ -281,10 +282,16 @@ async function main() {
     stopReason = stopReason || reason;
   };
 
+  const waitLogged = new Map(); // when each kind of wait was last logged
   const wait = (reason) => {
     // Logged once per kind of wait: the figures in brackets (orders pending, room left) change every tick.
     const kind = reason.replace(/\s*\(.*\)$/, '');
-    if (kind !== waitReason) log(`En attente : ${reason}.`);
+    // Two waits can also take turns every few ticks (the relayer load going over and under
+    // maxOpenBlocks while the cost is over its ceiling): one already logged recently is not repeated.
+    if (kind !== waitReason && !(Date.now() - (waitLogged.get(kind) || 0) < WAIT_RELOG_MS)) {
+      log(`En attente : ${reason}.`);
+      waitLogged.set(kind, Date.now());
+    }
     waitReason = kind;
     status = `En attente : ${reason}`;
   };
@@ -714,8 +721,9 @@ async function main() {
         risk.addLatency(Date.now() - awaiting.sentAt);
         // Shows whether both legs were filled at the same price, and how far from the price at sending.
         const { long, short } = pairs[0];
-        const gap = Math.abs(long.entry - short.entry);
-        log(`Paire ouverte : long @ ${long.entry.toFixed(1)}, short @ ${short.entry.toFixed(1)} (${gap ? `écart ${gap.toFixed(1)} $` : 'même prix'}, envoyée @ ${awaiting.price.toFixed(1)}, visible après ${((Date.now() - awaiting.sentAt) / 1000).toFixed(0)} s)`);
+        const g = entryGap(pairs[0]);
+        const gapText = !g.gap ? 'même prix' : `écart ${Math.abs(g.gap).toFixed(1)} $ : les 2 jambes sont passées dans des blocs différents, ${g.cost > 0 ? `~${usd(g.cost)} de coût en plus` : `~${usd(-g.cost)} gagnés`}`;
+        log(`Paire ouverte : long @ ${long.entry.toFixed(1)}, short @ ${short.entry.toFixed(1)} (${gapText}, envoyée @ ${awaiting.price.toFixed(1)}, visible après ${((Date.now() - awaiting.sentAt) / 1000).toFixed(0)} s)`);
         awaiting = null;
       } else if (Date.now() > awaiting.until || (awaiting.orphan && single.length) || loneFor > LONE_LEG_GRACE_MS) awaiting = null;
       else {

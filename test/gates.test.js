@@ -37,8 +37,17 @@ for (const proto of [base.proto, window]) {
   assert.ok(/format des ordres/.test(run({ proto, formatOk: false }).wait));
   assert.ok(/état du compte en retard/.test(run({ proto, stale: true }).wait));
   assert.ok(/queue de paiement active/.test(run({ proto: { ...proto, queueEmpty: false } }).wait));
-  assert.ok(/relayer congestionné \(312 ordres/.test(run({ proto, load: { level: 'HIGH', pending: 312 } }).wait));
+  assert.ok(/relayer chargé.*\(9 blocs, 312 ordres en attente\)/.test(run({ proto, load: { level: 'HIGH', neededBlocks: 9, pending: 312 } }).wait));
 }
+// Both legs are sent at once but each is its own order: with several blocks of backlog, a block
+// boundary can fall between them and they fill seconds apart, at two prices (2026-10-18 21:58,
+// 3 s and $20 apart). The bot opens only when the backlog fits in maxOpenBlocks blocks (2 by default).
+assert.strictEqual(DEFAULTS.maxOpenBlocks, 2);
+assert.deepStrictEqual(run({ load: { level: 'MEDIUM', neededBlocks: 2, pending: 20 } }), { open: 'normal' });
+assert.ok(/relayer chargé/.test(run({ load: { level: 'MEDIUM', neededBlocks: 3, pending: 25 } }).wait));
+assert.deepStrictEqual(run({ load: { level: 'MEDIUM', neededBlocks: 5, pending: 40 }, config: { ...DEFAULTS, maxOpenBlocks: 5 } }), { open: 'normal' });
+// No congestion reading (stream down): the bot does not wait for it.
+assert.deepStrictEqual(run({ load: null }), { open: 'normal' });
 assert.deepStrictEqual(run({ proto: { ...base.proto, queueEmpty: false }, config: { ...DEFAULTS, pauseWhenQueueActive: false } }), { open: 'normal' });
 // Stops come first: a spent budget is not hidden behind a wait.
 assert.ok(run({ spent: 30, stale: true }).stop);

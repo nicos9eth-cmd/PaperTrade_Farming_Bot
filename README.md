@@ -158,6 +158,7 @@ Remplace seulement ces lignes dans `config.json`, sans toucher au reste.
 | `minCloseAt` | Jusqu'où il peut avancer la clôture quand le marché s'agite ou que le réseau est congestionné. | 0.5 |
 | `targetMove` | Mouvement de prix visé avant clôture (0.01 = 1 %). Plus grand = levier plus bas (voir « Levier normal ou prudent »). Avec peu de capital, la taille minimale de Papertrade impose un levier plancher. | 0.01 |
 | `pauseWhenQueueActive` | Attendre quand la file de paiement de Papertrade est active. | true |
+| `maxOpenBlocks` | Le bot n'ouvre une paire que si les ordres en attente chez Papertrade tiennent dans ce nombre de blocs. Les 2 jambes sont 2 ordres séparés : quand la file est longue, elles peuvent passer dans 2 blocs différents, à 2 prix différents, et l'écart s'ajoute au coût du cycle. Plus haut = ouvre plus souvent pendant les heures chargées, avec plus de risque d'écart. | 2 |
 | `simulationCapital` | Capital fictif de la simulation, `null` pour ton vrai solde (ou 100 $ sans wallet). | null |
 | `sound` | Bips de `alertes.bat`. | true |
 | `wallet` | Ton adresse, remplie par `setup.bat`. | "" |
@@ -282,7 +283,8 @@ Avec `"lighterScalp": true` (ou la question 5 de `reglages.bat`, en mode P), le 
 | `Couverture réactive Lighter arrêtée pour cette session` | Elle a perdu plus que `lighterScalpMaxLossUsd`. La couverture d'urgence continue. Elle reprend au prochain lancement. |
 | `le budget restant couvre moins d'un cycle` | Lance `reglages.bat` pour adapter le budget à ton solde. |
 | `PAPER staké … minimum de 1000` | Stake du PAPER sur le site, sinon le relayer peut refuser tes ordres. |
-| `open interest … plein` / `relayer congestionné` | Normal, le bot attend tout seul. |
+| `open interest … plein` / `relayer chargé` | Normal, le bot attend tout seul. Pour ouvrir aussi pendant les heures chargées, monte `maxOpenBlocks` (voir les réglages). |
+| `Paire ouverte : … écart … $ : les 2 jambes sont passées dans des blocs différents` | Papertrade a exécuté les 2 jambes à quelques secondes d'écart. L'écart s'ajoute au coût de ce cycle (le montant est dans le message). Rien à faire : la clôture, elle, ferme les 2 jambes en un seul ordre. |
 | `Couverture Lighter désactivée : …` | La clé Lighter ne fonctionne plus (retirée sur le site Lighter, ou Python absent). Relance `setup-lighter.bat`. En attendant, le bot tourne sur Papertrade seul. Le premier démarrage après un redémarrage du PC peut être lent (l'antivirus vérifie Python) : le bot attend jusqu'à 90 s. |
 | `Lighter injoignable …` | Coupure côté Lighter : la couverture reprend toute seule dès que Lighter répond. |
 | `clôtures trop lentes en ce moment … même au levier minimum` | Le relayer met trop de temps à exécuter les clôtures : une paire ouverte maintenant risquerait d'être liquidée avant sa clôture. Le bot attend que ça se calme. Avec plus de capital, il peut baisser le levier au lieu d'attendre (Papertrade impose une position d'au moins 1 000 $). |
