@@ -219,8 +219,8 @@ async function main() {
     const max = await askAmount(`   Prix, ou Entrée pour ${ceiling} $ : `, (v) => (v !== null && v < picked.late.costPerPaper ? 'C\'est moins que le prix actuel : le bot n\'ouvrirait plus rien.' : null));
     next.maxCostPerPaper = max === null ? ceiling : max;
     if (lt) {
-      console.log(`\n5) Scalp de tendance sur Lighter : pendant chaque paire, le bot suit la tendance courte du BTC sur Lighter (jusqu'à 10x ton collatéral Lighter).`);
-      console.log('   Expérimental : il ne rapporte pas de PAPER, il peut gagner quand le prix file dans un sens et perdre quand il hésite. Il s\'arrête seul au-delà de la perte réglée.');
+      console.log(`\n5) Couverture réactive sur Lighter : pendant chaque paire, le bot couvre sur Lighter la jambe qui perd (jusqu'à 10x ton collatéral Lighter) et change de côté dès que le prix repasse le prix d'ouverture.`);
+      console.log('   Expérimental : elle ne rapporte pas de PAPER ; elle gagne quand le prix part franchement, et chaque aller-retour autour du prix d\'ouverture coûte quelques centimes. Elle s\'arrête seule au-delà de la perte réglée.');
       for (;;) {
         const raw = await ask(`   Activer ? O/N (Entrée = ${config.lighterScalp ? 'O' : 'N'}, inchangé) : `);
         if (raw === null) throw new Error('saisie interrompue');
@@ -233,7 +233,7 @@ async function main() {
         console.log('  Tape O ou N.');
       }
       if (next.lighterScalp ?? config.lighterScalp) {
-        const loss = await askAmount(`   Perte maximale du scalp par session, ou Entrée pour ${config.lighterScalpMaxLossUsd} $ : `, () => null);
+        const loss = await askAmount(`   Perte maximale de la couverture réactive par session, ou Entrée pour ${config.lighterScalpMaxLossUsd} $ : `, () => null);
         if (loss !== null) next.lighterScalpMaxLossUsd = loss;
       }
     }
@@ -247,7 +247,7 @@ async function main() {
   ];
   if (lt) {
     const scalpText = (on, loss) => (on ? `activé (perte max ${loss} $)` : 'désactivé');
-    lines2.push(['Scalp Lighter', scalpText(config.lighterScalp, config.lighterScalpMaxLossUsd), scalpText(next.lighterScalp ?? config.lighterScalp, next.lighterScalpMaxLossUsd ?? config.lighterScalpMaxLossUsd)]);
+    lines2.push(['Couverture réactive', scalpText(config.lighterScalp, config.lighterScalpMaxLossUsd), scalpText(next.lighterScalp ?? config.lighterScalp, next.lighterScalpMaxLossUsd ?? config.lighterScalpMaxLossUsd)]);
   }
   console.log('\nChangements :');
   for (const [label, before, after] of lines2) console.log(`  ${label.padEnd(20)} ${before === after ? before + ' (inchangé)' : `${before}  ->  ${after}`}`);

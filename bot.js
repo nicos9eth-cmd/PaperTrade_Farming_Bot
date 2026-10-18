@@ -21,6 +21,7 @@ const hedge = require('./lib/hedge');
 const gates = require('./lib/gates');
 const burst = require('./lib/burst');
 const scalp = require('./lib/scalp');
+const { liveMid } = require('./lib/feed');
 let config;
 try {
   config = require('./lib/config').load();
@@ -35,7 +36,9 @@ const SCREEN = process.stdout.isTTY && !process.argv.includes('--plain');
 const SIM_WINDOW = !LIVE && process.argv.includes('--simuler-fenetre');
 // Simulation only: a simulated Lighter account ($50) even without setup-lighter.bat.
 const SIM_LIGHTER = !LIVE && process.argv.includes('--simuler-lighter');
-const SCALP_MAX_LEVERAGE = 10; // the overlay alone never carries more than 10x the Lighter collateral
+const SCALP_MAX_LEVERAGE = 10; // the cover alone never carries more than 10x the Lighter collateral
+const SCALP_CONFIRM_MS = 1000; // a cover order is checked on the account 1 s later (Lighter fills at once)
+const FAST_MIN_GAP_MS = 300; // the live price triggers a Lighter check at most this often
 const JOURNAL = path.join(__dirname, LIVE ? 'journal.csv' : 'journal-simulation.csv');
 const LOG_FILE = path.join(__dirname, LIVE ? 'bot.log' : 'bot-simulation.log');
 const BUDGET_FILE = path.join(__dirname, '.budget.json');
@@ -157,11 +160,10 @@ async function main() {
       lt = real ? lighterLib.simulated(real.collateral, real.base, real.entry) : lighterLib.simulated(20);
     }
   } else if (SIM_LIGHTER) lt = lighterLib.simulated(50);
-  // Trend overlay on Lighter (lib/scalp.js), with its own result and loss limit.
+  // Reactive cover of the losing leg on Lighter (lib/scalp.js), with its own result and loss limit.
   let scalpOn = !!(lt && config.lighterScalp);
   let scalpState;
-  let scalpHeld = 0; // overlay the bot holds on Lighter, part of `own`
-  let scalpShare = 0;
+  let scalpHeld = 0; // cover the bot holds on Lighter, part of `own`
   const scalpBook = scalp.ledger();
   let scalpAtCycle = 0;
 
@@ -234,7 +236,7 @@ async function main() {
     const l = await lt.state().catch(() => null);
     const mine = l && Math.abs(l.base - own) >= 1e-5 ? ` Ta position BTC manuelle (${l.base - own > 0 ? 'long' : 'short'} ${Math.abs(l.base - own).toFixed(5)} BTC) est conservée ; elle ne sera réduite que si une couverture a besoin de sa marge.` : '';
     log(`Couverture Lighter active (${lt.name}${lkey ? `, compte ${lkey.account_index}` : ''}${l ? `, collatéral ${usd(l.equity)}` : ''}).${mine}`);
-    if (scalpOn) log(`Scalp de tendance Lighter actif : suit la tendance courte pendant chaque paire, arrêt si son résultat passe sous -${usd(config.lighterScalpMaxLossUsd)}.`);
+    if (scalpOn) log(`Couverture réactive Lighter active : pendant chaque paire, couvre la jambe qui perd et change de côté dès que le prix repasse l'entrée (prix en direct), arrêt si son résultat passe sous -${usd(config.lighterScalpMaxLossUsd)}.`);
   } else log('Pas de couverture Lighter : le bot reste uniquement sur Papertrade.');
   if (SCREEN) process.stdout.write('\x1b[2J');
 
@@ -291,7 +293,7 @@ async function main() {
     cycles++;
     const spent = start.realized - realizedAll();
     const total = state.paper - start.paper;
-    const scalpPart = config.lighterScalp && lt ? ` | scalp Lighter ${usd(scalpBook.pnl - scalpAtCycle)} (cumul ${usd(scalpBook.pnl)})` : '';
+    const scalpPart = config.lighterScalp && lt ? ` | couverture réactive Lighter ${usd(scalpBook.pnl - scalpAtCycle)} (cumul ${usd(scalpBook.pnl)})` : '';
     scalpAtCycle = scalpBook.pnl;
     log(`Cycle terminé : PnL ${usd(pnl)}, +${Math.round(paper)} PAPER${paper > 0 ? `, $${(-pnl / paper).toFixed(4)} par PAPER` : ''} | cumul : coût ${usd(spent)}, ${Math.round(total)} PAPER${scalpPart}`);
     journal([new Date().toISOString(), price.toFixed(1), pnl.toFixed(4), paper.toFixed(2), paper > 0 ? (-pnl / paper).toFixed(5) : '', spent.toFixed(4), total.toFixed(2)]);
@@ -393,6 +395,11 @@ async function main() {
   // Keeps the Lighter BTC position opposite to the net Papertrade exposure (lib/hedge.js). Runs in
   // the background, one at a time: a Lighter order never delays a Papertrade close, and a Lighter
   // failure never stops the Papertrade side.
+  // The pair the reactive cover follows: exactly one complete pair, not being closed, no bust crossed.
+  const coverPair = (positions) => {
+    const { pairs: complete } = buildPairs(positions);
+    return complete.length === 1 && !busts.size && !(awaiting && awaiting.kind === 'close') ? complete[0] : null;
+  };
   const hedgeTick = async (price, positions) => {
     const l = await lt.state();
     const capacity = (Math.max(0, l.equity) * lighterLib.MAX_LEVERAGE * 0.9) / price;
@@ -410,35 +417,22 @@ async function main() {
     scalpBook.mark(price, scalpHeld);
     if (scalpOn && scalpBook.pnl < -config.lighterScalpMaxLossUsd) {
       scalpOn = false;
-      log(`Scalp Lighter arrêté pour cette session : son résultat (${usd(scalpBook.pnl)}) a passé la limite de -${usd(config.lighterScalpMaxLossUsd)}. La couverture d'urgence reste active.`);
+      log(`Couverture réactive Lighter arrêtée pour cette session : son résultat (${usd(scalpBook.pnl)}) a passé la limite de -${usd(config.lighterScalpMaxLossUsd)}. La couverture d'urgence reste active.`);
     }
-    lighterView = { ...l, own, capacityUsd: capacity * price, scalp: config.lighterScalp ? { on: scalpOn, held: scalpHeld, share: scalpShare, pnl: scalpBook.pnl } : null };
+    lighterView = { ...l, own, capacityUsd: capacity * price, scalp: config.lighterScalp ? { on: scalpOn, held: scalpHeld, pnl: scalpBook.pnl } : null };
     if (pendingFill) return;
-    // Trend overlay: on one complete pair that is not being closed, never once a bust was crossed.
+    // Reactive cover: on one complete pair that is not being closed, never once a bust was crossed.
     let overlay = 0;
     if (scalpOn) {
-      const { pairs: complete } = buildPairs(positions);
-      const pair = complete.length === 1 && !busts.size && !(awaiting && awaiting.kind === 'close') ? complete[0] : null;
-      const s = pair && pairStatus(pair, price, proto);
-      // A complete pair needs no hedge: what the bot holds on Lighter then is the overlay, including
+      const pair = coverPair(positions);
+      // A complete pair needs no hedge: what the bot holds on Lighter then is the cover, including
       // one left by a previous run, which a restart must not unwind and take again.
       if (pair && !scalpHeld && own) {
         scalpHeld = own;
-        log(`Scalp Lighter : position du bot reprise (${own > 0 ? 'long' : 'short'} ${Math.abs(own).toFixed(5)} BTC).`);
+        log(`Couverture réactive Lighter : position du bot reprise (${own > 0 ? 'long' : 'short'} ${Math.abs(own).toFixed(5)} BTC).`);
       }
-      const r = scalp.target({
-        pair,
-        price,
-        now: Date.now(),
-        vol: risk.assess(1, config).vol,
-        trend: risk.trend(scalp.TREND_WINDOW_MS),
-        closeMove: s ? s.bustMove * closeAtFor(s) : 0,
-        capBtc: (Math.max(0, l.equity) * SCALP_MAX_LEVERAGE) / price,
-        current: scalpHeld,
-        state: scalpState,
-      });
+      const r = scalp.cover({ pair, price, now: Date.now(), capBtc: (Math.max(0, l.equity) * SCALP_MAX_LEVERAGE) / price, current: scalpHeld, state: scalpState });
       scalpState = r.state;
-      scalpShare = r.share;
       overlay = r.overlay;
     }
     const p = hedge.plan({ positions, busted: busts, current: l.base, own, price, capacity, minTrade: 10, overlay });
@@ -459,10 +453,10 @@ async function main() {
     }
     const btc = (x) => (x ? `${x > 0 ? 'long' : 'short'} ${Math.abs(x).toFixed(5)} BTC` : 'rien');
     const why = p.scalp
-      ? `scalp de tendance (force ${Math.round(scalpShare * 100)} %, côté ${p.hedge > 0 ? 'hausse' : 'baisse'}, au plus ${SCALP_MAX_LEVERAGE}x le collatéral Lighter)`
+      ? `couverture réactive : prix ${p.hedge > 0 ? 'au-dessus' : 'en dessous'} de l'entrée de la paire, la jambe ${p.hedge > 0 ? 'short' : 'long'} perd`
       : !p.need
       ? scalpHeld
-        ? 'fin du scalp de tendance'
+        ? 'fin de la couverture réactive'
         : 'fin de la couverture'
       : busts.size
       ? 'une jambe Papertrade a passé son prix de liquidation'
@@ -470,11 +464,11 @@ async function main() {
     const cut = Math.abs(p.baseline) < Math.abs(l.base - own) - 1e-6 ? `, ta position BTC manuelle réduite à ${btc(p.baseline)} pour libérer de la marge` : '';
     log(`Lighter : ${p.order > 0 ? 'achat' : 'vente'} de ${Math.abs(p.order).toFixed(5)} BTC (~${usd(Math.abs(p.order) * price)}), ${why}. Couverture du bot : ${btc(p.hedge)}${cut}.`);
     // Lighter fills or refuses within a second; the next reading shows which.
-    hedgeRetryAt = Date.now() + 5000;
+    hedgeRetryAt = Date.now() + (p.scalp ? SCALP_CONFIRM_MS : 5000);
     pendingFill = { before: l.base, baseline: p.baseline };
     try {
       await lt.trade(p.order, p.reduceOnly);
-      // The overlay's part of the bot's position: replaced by any real hedge.
+      // The cover's part of the bot's position: replaced by any real hedge.
       const held = p.scalp ? p.hedge : 0;
       if (held !== scalpHeld) scalpBook.trade(held - scalpHeld, price);
       scalpHeld = held;
@@ -484,6 +478,31 @@ async function main() {
       pendingFill = null;
     }
   };
+  // One Lighter pass at a time, from the bot's tick or from the live price.
+  let coverPositions = null; // BTC positions of the last tick, for the live price
+  const runHedge = (price, positions) => {
+    if (hedgeBusy) return;
+    if (lt.onPrice) lt.onPrice(price);
+    hedgeBusy = true;
+    hedgeTick(price, positions)
+      .catch((e) => {
+        if (!lighterError) log(`Lighter injoignable (${e.message}), la couverture reprendra dès que possible.`);
+        lighterError = e.message;
+      })
+      .finally(() => (hedgeBusy = false));
+  };
+  // The cover turns as soon as the live price crosses the pair's entry, not at the next tick.
+  let fastAt = 0;
+  if (scalpOn)
+    liveMid((mid) => {
+      if (!scalpOn || hedgeBusy || pendingFill || !coverPositions || Date.now() < Math.max(hedgeRetryAt, fastAt + FAST_MIN_GAP_MS)) return;
+      const pair = coverPair(coverPositions);
+      if (!pair) return;
+      const want = scalp.cover({ pair, price: mid, now: Date.now(), capBtc: 1, current: scalpHeld, state: scalpState }).overlay;
+      if (Math.sign(want) === Math.sign(scalpHeld)) return;
+      fastAt = Date.now();
+      runHedge(mid, coverPositions);
+    });
 
   // Slow-moving data is refreshed in the background so that it never delays a decision.
   const refreshMarkets = () =>
@@ -571,16 +590,8 @@ async function main() {
     const btcPositions = state.positions.filter((p) => p.market && p.market.coin === 'BTC');
     const { pairs, single } = buildPairs(btcPositions);
     busts.update(btcPositions, price);
-    if (lt && !hedgeBusy) {
-      if (lt.onPrice) lt.onPrice(price);
-      hedgeBusy = true;
-      hedgeTick(price, btcPositions)
-        .catch((e) => {
-          if (!lighterError) log(`Lighter injoignable (${e.message}), la couverture reprendra dès que possible.`);
-          lighterError = e.message;
-        })
-        .finally(() => (hedgeBusy = false));
-    }
+    coverPositions = btcPositions;
+    if (lt) runHedge(price, btcPositions);
     const open = [...single, ...pairs.flatMap((p) => [p.long, p.short])];
     const load = relayer.current();
     risk.setQueueDelay(load ? Math.max(0, load.clearSeconds - 3) : UNKNOWN_QUEUE_DELAY_S);

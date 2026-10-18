@@ -67,7 +67,7 @@ p = plan({ positions: [long, shortLater], busted: bustTracker(), current: 0, own
 assert.strictEqual(p.order, 0);
 assert.ok(Math.abs(exposure([long, shortLater], bustTracker())) * 81900 < 1);
 
-// Trend overlay (lib/scalp.js) on a complete pair: the bot's position follows it.
+// Reactive cover (lib/scalp.js) on a complete pair: the bot's position follows it.
 const flatT = bustTracker();
 flatT.update([long, short], 80900);
 p = plan({ positions: [long, short], busted: flatT, current: 0, own: 0, price: 80900, overlay: -leg, ...opts });

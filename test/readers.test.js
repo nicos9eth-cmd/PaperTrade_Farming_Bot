@@ -72,11 +72,11 @@ const screen = render({
   pressure: { level: 'LOW', pending: 3, clearSeconds: 3 },
   status: 'Surveillance de la paire',
   stopReason: null,
-  lighter: { base: 0.006, own: 0.006, equity: 50, capacityUsd: 2250, liquidation: 0, scalp: { on: true, held: 0.006, share: 0.8, pnl: 0.12 } },
+  lighter: { base: 0.006, own: 0.006, equity: 50, capacityUsd: 2250, liquidation: 0, scalp: { on: true, held: 0.006, pnl: 0.12 } },
   events: ['un événement'],
   totals: { cycles: 1, spent: 5, paper: 1600, budgetSpent: 5 },
 });
-assert.ok(screen.includes('FENÊTRE OUVERTE') && screen.includes('scalp de tendance : long 0.00600 BTC') && screen.includes('force de la tendance 80 %'));
+assert.ok(screen.includes('FENÊTRE OUVERTE') && screen.includes('couverture réactive : long 0.00600 BTC') && screen.includes('résultat de la couverture réactive') && /\$0[.,]12/.test(screen));
 
 // Site update report.
 const before = { texts: { 'Close position': 'trade', 'Old banner text': 'app' }, modules: { trade: 'a', app: 'b' }, params: { 'BTC levier max': 1000 } };

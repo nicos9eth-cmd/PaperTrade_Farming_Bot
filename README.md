@@ -40,7 +40,7 @@ Pour simuler avec ton propre montant, mets par exemple `"simulationCapital": 250
 
 Un cycle ne se termine que quand le BTC a bougé d'environ 0,6 à 1 % (jusqu'à 2 % avec le levier prudent). Si le marché est calme, il peut ne rien se passer pendant des heures : c'est normal.
 
-Pour voir ce que fait le bot pendant une fenêtre à 100 PAPER/$ sans attendre qu'elle arrive : ouvre un terminal dans le dossier du bot et tape `node bot.js --simuler-fenetre`. Ajoute `--simuler-lighter` pour simuler aussi un compte Lighter de 50 $ (scalp de tendance compris, s'il est activé dans `config.json`).
+Pour voir ce que fait le bot pendant une fenêtre à 100 PAPER/$ sans attendre qu'elle arrive : ouvre un terminal dans le dossier du bot et tape `node bot.js --simuler-fenetre`. Ajoute `--simuler-lighter` pour simuler aussi un compte Lighter de 50 $ (couverture réactive comprise, si elle est activée dans `config.json`).
 
 ## 4. Autoriser le bot sur ton compte
 
@@ -152,8 +152,8 @@ Remplace seulement ces lignes dans `config.json`, sans toucher au reste.
 | `maxCostPerPaper` | Le bot se met en veille si un PAPER coûterait plus que ce montant en $ (hors fenêtre). | 0.012 |
 | `minMintRate` | Le bot se met en veille si Papertrade donne moins de ce nombre de PAPER par dollar perdu (hors fenêtre). | 10 |
 | `burstMaxCostPerPaper` | Pendant une fenêtre LP < 2 M : prix maximum d'un PAPER pour les rotations courtes. Plus bas = rotations plus longues et moins de PAPER par heure. | 0.004 |
-| `lighterScalp` | Scalp de tendance sur Lighter pendant chaque paire (expérimental, voir « Couverture sur Lighter »). | false |
-| `lighterScalpMaxLossUsd` | Perte en $ du scalp, sur une session, au-delà de laquelle le bot l'arrête. | 5 |
+| `lighterScalp` | Couverture réactive de la jambe qui perd, sur Lighter, pendant chaque paire (expérimental, voir « Couverture sur Lighter »). | false |
+| `lighterScalpMaxLossUsd` | Perte en $ de la couverture réactive, sur une session, au-delà de laquelle le bot l'arrête. | 5 |
 | `closeAt` | Part du chemin vers la liquidation à laquelle le bot ferme au plus tard (0.85 = 85 %). | 0.85 |
 | `minCloseAt` | Jusqu'où il peut avancer la clôture quand le marché s'agite ou que le réseau est congestionné. | 0.5 |
 | `targetMove` | Mouvement de prix visé avant clôture (0.01 = 1 %). Plus grand = levier plus bas (voir « Levier normal ou prudent »). Avec peu de capital, la taille minimale de Papertrade impose un levier plancher. | 0.01 |
@@ -231,17 +231,17 @@ Ensuite, `bot-live.bat` affiche une ligne **LIGHTER** dans le tableau de bord. S
 - Le résultat sur Lighter (gain ou perte de la couverture, funding) est compté dans les cycles, la session et le budget.
 - La clé du bot est dans `.lighter-key.json` : **ne partage jamais ce fichier**. Elle peut passer des ordres et renvoyer des fonds vers ta propre adresse uniquement.
 
-### Scalp de tendance sur Lighter (expérimental, désactivé par défaut)
+### Couverture réactive sur Lighter (expérimental, désactivée par défaut)
 
-Avec `"lighterScalp": true` (ou la question 5 de `reglages.bat`, en mode P), le bot ne laisse plus Lighter vide pendant une paire. Il y suit la tendance courte du BTC : en hausse, il achète sur Lighter, ce qui compense la jambe short qui perd ; en baisse, il vend.
+Avec `"lighterScalp": true` (ou la question 5 de `reglages.bat`, en mode P), le bot ne laisse plus Lighter vide pendant une paire : il y couvre la jambe qui perd. Prix au-dessus de l'ouverture de la paire : c'est le short qui perd, le bot est acheteur sur Lighter. Prix en dessous : c'est le long qui perd, il est vendeur.
 
-- **La taille suit la netteté de la tendance, pas la volatilité.** Un prix qui file dans un sens est ce qui rapporte. Un prix qui fait des allers-retours rapides est ce qui coûte le plus (achats en haut, ventes en bas). Le bot mesure donc la tendance des 2 dernières minutes : rien si le prix hésite, jusqu'à une jambe entière si la tendance est nette.
-- **Il ne change de côté qu'une fois sorti d'une bande autour du prix d'entrée** de la paire. La bande s'élargit quand la volatilité monte. Il garde ensuite son côté au moins 20 s, ce qui évite le ping-pong.
-- **Il reste petit** : jamais plus de 10 fois ton collatéral Lighter, et il ne touche jamais ta propre position Lighter pour se faire de la place.
-- **La couverture d'urgence reste prioritaire.** Si une jambe Papertrade est liquidée ou reste seule, le bot remplace le scalp par la couverture de la jambe restante, en un seul ordre.
-- **Il a son propre résultat**, affiché sur la ligne LIGHTER et à chaque fin de cycle (« scalp Lighter »). Il compte dans le budget. S'il perd plus que `lighterScalpMaxLossUsd` sur une session, le bot l'arrête jusqu'au prochain lancement.
+- **Il change de côté dès que le prix repasse le prix d'ouverture**, au plus une fois toutes les 2 secondes. Il suit pour ça le prix BTC de Hyperliquid en direct (le prix sur lequel Papertrade se règle), mis à jour environ 5 fois par seconde, au lieu d'attendre le tour de 2 secondes du bot.
+- **Comment il gagne et ce qu'il coûte.** À la clôture de la paire, il est du bon côté depuis le dernier passage du prix d'ouverture : ce dernier trade gagne. Chaque aller-retour avant coûte quelques centimes, parce qu'on réagit toujours un poil en retard et qu'on paie l'écart entre prix d'achat et de vente (Lighter ne prend pas de frais). Sur les 14 jours de prix d'octobre 2026, avec l'écart mesuré sur Lighter, le résultat était proche de zéro (entre -0,20 $ et +0,10 $ par jour selon la vitesse de réaction).
+- **Il reste petit** : jamais plus de 10 fois ton collatéral Lighter, ni plus d'une jambe, et il ne touche jamais ta propre position Lighter pour se faire de la place. Sa taille est fixée à chaque changement de côté.
+- **La couverture d'urgence reste prioritaire.** Si une jambe Papertrade est liquidée ou reste seule, le bot remplace la couverture réactive par la couverture de la jambe restante, en un seul ordre.
+- **Elle a son propre résultat**, affiché sur la ligne LIGHTER et à chaque fin de cycle (« couverture réactive Lighter »). Il compte dans le budget. Si elle perd plus que `lighterScalpMaxLossUsd` sur une session, le bot l'arrête jusqu'au prochain lancement.
 
-À savoir honnêtement : le scalp ne rapporte **pas de PAPER**. Sur un marché qui part au hasard, il gagne en moyenne à peu près zéro, moins le coût des ordres. Il ne vaut que si le BTC tend à prolonger ses mouvements courts. Son résultat affiché à part sert à juger s'il vaut la peine pour toi.
+À savoir honnêtement : elle ne rapporte **pas de PAPER** et ne réduit pas le coût des PAPER (ce coût vient de la part que Papertrade garde sur la jambe gagnante). Ta paire Papertrade est déjà équilibrée : l'intérêt est d'être toujours du bon côté si le prix part d'un coup, pour presque rien.
 
 ## Ce que le bot fait tout seul
 
@@ -277,7 +277,7 @@ Avec `"lighterScalp": true` (ou la question 5 de `reglages.bat`, en mode P), le 
 | `budget atteint` | Normal : relance `reglages.bat` (ou augmente `maxNetLossUsd`) si tu veux continuer. |
 | `veille, taux de mint … sous le plancher` ou `veille, coût attendu …` | Normal quand le taux de mint baisse : le bot ne dépense rien et surveille le LP. Il repart tout seul pendant une fenêtre à 100 PAPER/$. Pour farmer quand même au taux bas, baisse `minMintRate` ou monte `maxCostPerPaper` (avec `reglages.bat`). |
 | `FENÊTRE OUVERTE : LP … sous 2.00 M` | Le LP est passé sous 2 M $ : rotations courtes à 100 PAPER/$, rien à faire. Surveille le budget. |
-| `Scalp Lighter arrêté pour cette session` | Le scalp a perdu plus que `lighterScalpMaxLossUsd`. La couverture d'urgence continue. Il reprend au prochain lancement. |
+| `Couverture réactive Lighter arrêtée pour cette session` | Elle a perdu plus que `lighterScalpMaxLossUsd`. La couverture d'urgence continue. Elle reprend au prochain lancement. |
 | `le budget restant couvre moins d'un cycle` | Lance `reglages.bat` pour adapter le budget à ton solde. |
 | `PAPER staké … minimum de 1000` | Stake du PAPER sur le site, sinon le relayer peut refuser tes ordres. |
 | `open interest … plein` / `relayer congestionné` | Normal, le bot attend tout seul. |
