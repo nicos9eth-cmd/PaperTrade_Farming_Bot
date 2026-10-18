@@ -281,10 +281,11 @@ Avec `"lighterScalp": true` (ou la question 5 de `reglages.bat`, en mode P), le 
 | `le budget restant couvre moins d'un cycle` | Lance `reglages.bat` pour adapter le budget à ton solde. |
 | `PAPER staké … minimum de 1000` | Stake du PAPER sur le site, sinon le relayer peut refuser tes ordres. |
 | `open interest … plein` / `relayer congestionné` | Normal, le bot attend tout seul. |
-| `Couverture Lighter désactivée : …` | La clé Lighter ne fonctionne plus (retirée sur le site Lighter, ou Python absent). Relance `setup-lighter.bat`. En attendant, le bot tourne sur Papertrade seul. |
+| `Couverture Lighter désactivée : …` | La clé Lighter ne fonctionne plus (retirée sur le site Lighter, ou Python absent). Relance `setup-lighter.bat`. En attendant, le bot tourne sur Papertrade seul. Le premier démarrage après un redémarrage du PC peut être lent (l'antivirus vérifie Python) : le bot attend jusqu'à 90 s. |
 | `Lighter injoignable …` | Coupure côté Lighter : la couverture reprend toute seule dès que Lighter répond. |
 | `clôtures trop lentes en ce moment … même au levier minimum` | Le relayer met trop de temps à exécuter les clôtures : une paire ouverte maintenant risquerait d'être liquidée avant sa clôture. Le bot attend que ça se calme. Avec plus de capital, il peut baisser le levier au lieu d'attendre (Papertrade impose une position d'au moins 1 000 $). |
 | `Lecture impossible : …` puis `Lectures rétablies` | Petite coupure internet, rien à faire. |
+| `… -> HTTP 429` | Papertrade limite le nombre de connexions par connexion internet, et les onglets Papertrade ouverts dans ton navigateur comptent aussi. Le bot garde une seule connexion ouverte vers ton compte et patiente de plus en plus longtemps (jusqu'à 30 s) avant de réessayer. Si ça dure, ferme les onglets Papertrade en trop. |
 | `le format des ordres a changé sur le site Papertrade` | Papertrade a modifié son site : lance `mettre-a-jour.bat` (une version adaptée peut mettre un peu de temps à sortir). |
 | La page de `setup.bat` dit « Aucun wallet détecté » | Ouvre l'adresse affichée dans le navigateur où ton wallet est installé. |
 

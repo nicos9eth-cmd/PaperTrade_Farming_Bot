@@ -117,8 +117,10 @@ function admission(mkts, market, price, notional) {
 
 async function main() {
   if (!config.wallet && LIVE) throw new Error('Aucun wallet configuré : lance d\'abord setup.bat');
-  const mkts = await api.markets();
-  let proto = await readProto();
+  // A rate limit or timeout at start-up is retried instead of stopping the bot.
+  const boot = (fn) => api.retry(fn, { log: (s) => log(`Démarrage : ${s}`) });
+  const mkts = await boot(() => api.markets());
+  let proto = await boot(readProto);
   let version = await site.check();
   if (version.build) config.build = version.build;
   const relayer = pressure.watch();
@@ -131,7 +133,7 @@ async function main() {
     ex = exchange.live(config, key, mkts);
   } else {
     // Before setup (no wallet yet), the simulation runs on simulationCapital, or $100.
-    const w = config.wallet && !config.simulationCapital ? await api.walletSnapshot(config.wallet) : null;
+    const w = config.wallet && !config.simulationCapital ? await boot(() => api.walletSnapshot(config.wallet)) : null;
     const capital = config.simulationCapital || (w ? api.num(w.funds.availableBalance) + api.num(w.locked) : 100);
     ex = exchange.simulated(config, mkts, capital, () => proto);
   }
@@ -163,7 +165,7 @@ async function main() {
   const scalpBook = scalp.ledger();
   let scalpAtCycle = 0;
 
-  let state = await ex.state();
+  let state = await boot(() => ex.state());
   let stateAt = Date.now();
   if (LIVE && state.keyExpiry * 1000 < Date.now() + 2 * 3600e3) throw new Error('Clé de session absente ou expirée côté Papertrade : relance setup.bat');
   if (LIVE && state.paperStaked < mkts.minPaperStake)
@@ -192,6 +194,12 @@ async function main() {
   const risk = tracker();
   let closeAt = config.closeAt; // adaptive, never above config.closeAt
   let riskView = null;
+  // Close point of an open pair: under the cliff, its own best point for short rotations.
+  const closeAtFor = (s) => {
+    if (!proto.window || !s || !riskView) return closeAt;
+    const best = burst.bestClose({ notional: s.loser.notional, bustMove: s.bustMove, market: s.loser.market, proto, config, vol: riskView.vol, overhead: cycleOverhead(riskView) });
+    return best ? Math.min(best.closeAt, closeAt) : closeAt;
+  };
   let orphans = 0; // single-leg incidents in a row
   let countedOrphans = '';
   let stopReason = null;
@@ -367,7 +375,7 @@ async function main() {
           pairs,
           single,
           config,
-          closeAt,
+          closeAt: pairs.length ? closeAtFor(pairStatus(pairs[0], price, proto)) : closeAt,
           risk: riskView,
           pressure: relayer.current(),
           status,
@@ -418,7 +426,7 @@ async function main() {
         now: Date.now(),
         vol: risk.assess(1, config).vol,
         trend: risk.trend(scalp.TREND_WINDOW_MS),
-        closeMove: s ? s.bustMove * closeAt : 0,
+        closeMove: s ? s.bustMove * closeAtFor(s) : 0,
         capBtc: (Math.max(0, l.equity) * SCALP_MAX_LEVERAGE) / price,
         current: scalpHeld,
         state: scalpState,
@@ -620,9 +628,7 @@ async function main() {
     const windowDue = (pair) => {
       if (!proto.window) return false;
       const s = pairStatus(pair, price, proto);
-      if (burst.closeNowWorth({ status: s, proto, config, normalCloseAt: closeAt })) return true;
-      const best = burst.bestClose({ notional: s.loser.notional, bustMove: s.bustMove, market: s.loser.market, proto, config, vol: riskView.vol, overhead: cycleOverhead(riskView) });
-      return !!best && s.progress >= best.closeAt;
+      return burst.closeNowWorth({ status: s, proto, config, normalCloseAt: closeAt }) || s.progress >= closeAtFor(s);
     };
     const due = pairs.filter((p) => pairStatus(p, price, proto).progress >= closeAt || windowDue(p));
     if (due.length) {
@@ -682,7 +688,7 @@ async function main() {
       status = 'Surveillance de la paire';
       if (!SCREEN && tick % Math.max(1, Math.round(60 / config.pollSeconds)) === 0) {
         const s = pairStatus(pairs[0], price, proto);
-        log(`BTC ${price.toFixed(1)} | paire ${usd(s.loser.margin)} x${s.loser.leverage} | mouvement ${pct(s.move)} / ${pct(s.bustMove)} (${Math.round(s.progress * 100)}%) | seuil ${Math.round(closeAt * 100)}% | mint ${mintRate(proto.paper).toFixed(2)}`);
+        log(`BTC ${price.toFixed(1)} | paire ${usd(s.loser.margin)} x${s.loser.leverage} | mouvement ${pct(s.move)} / ${pct(s.bustMove)} (${Math.round(s.progress * 100)}%) | seuil ${Math.round(closeAtFor(s) * 100)}% | mint ${mintRate(proto.paper).toFixed(2)}`);
       }
       return;
     }
