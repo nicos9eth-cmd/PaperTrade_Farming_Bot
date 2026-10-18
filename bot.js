@@ -18,6 +18,9 @@ const { mintRate, pairOutcome } = require('./lib/economics');
 const { sizePair, cycleRange } = require('./lib/sizing');
 const lighterLib = require('./lib/lighter');
 const hedge = require('./lib/hedge');
+const gates = require('./lib/gates');
+const burst = require('./lib/burst');
+const scalp = require('./lib/scalp');
 let config;
 try {
   config = require('./lib/config').load();
@@ -28,10 +31,18 @@ try {
 
 const LIVE = process.argv.includes('--live');
 const SCREEN = process.stdout.isTTY && !process.argv.includes('--plain');
+// Simulation only: the pool is shown under the cliff, to watch the short rotations of the window.
+const SIM_WINDOW = !LIVE && process.argv.includes('--simuler-fenetre');
+// Simulation only: a simulated Lighter account ($50) even without setup-lighter.bat.
+const SIM_LIGHTER = !LIVE && process.argv.includes('--simuler-lighter');
+const SCALP_MAX_LEVERAGE = 10; // the overlay alone never carries more than 10x the Lighter collateral
 const JOURNAL = path.join(__dirname, LIVE ? 'journal.csv' : 'journal-simulation.csv');
 const LOG_FILE = path.join(__dirname, LIVE ? 'bot.log' : 'bot-simulation.log');
 const BUDGET_FILE = path.join(__dirname, '.budget.json');
 const OPEN_COOLDOWN_MS = 60000;
+const BURST_COOLDOWN_MS = 5000; // between two openings while the pool is under the cliff
+const PROTO_TICKS = 5; // pool read every 5 ticks, and every tick within NEAR_CLIFF of the cliff
+const NEAR_CLIFF = 1.5;
 const BLOCKED_RETRY_MS = 120000;
 const CLOSE_TIMEOUT_MS = 90000;
 const CLOSE_RETRY_MS = 10000;
@@ -51,6 +62,7 @@ const TEMPORARY = new Set(['openInterest', 'tradingPaused', 'marketPaused', 'fun
 const usd = (n) => '$' + n.toFixed(2);
 const pct = (n) => (n * 100).toFixed(2) + '%';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const readProto = () => api.protocol().then((p) => (SIM_WINDOW ? burst.simulatedWindow(p) : p));
 
 const events = [];
 function log(msg) {
@@ -106,7 +118,7 @@ function admission(mkts, market, price, notional) {
 async function main() {
   if (!config.wallet && LIVE) throw new Error('Aucun wallet configuré : lance d\'abord setup.bat');
   const mkts = await api.markets();
-  let proto = await api.protocol();
+  let proto = await readProto();
   let version = await site.check();
   if (version.build) config.build = version.build;
   const relayer = pressure.watch();
@@ -142,7 +154,14 @@ async function main() {
       const real = await lighterLib.account(lkey.account_index).catch(() => null);
       lt = real ? lighterLib.simulated(real.collateral, real.base, real.entry) : lighterLib.simulated(20);
     }
-  }
+  } else if (SIM_LIGHTER) lt = lighterLib.simulated(50);
+  // Trend overlay on Lighter (lib/scalp.js), with its own result and loss limit.
+  let scalpOn = !!(lt && config.lighterScalp);
+  let scalpState;
+  let scalpHeld = 0; // overlay the bot holds on Lighter, part of `own`
+  let scalpShare = 0;
+  const scalpBook = scalp.ledger();
+  let scalpAtCycle = 0;
 
   let state = await ex.state();
   let stateAt = Date.now();
@@ -201,11 +220,13 @@ async function main() {
 
   log(version.build ? `Version du site détectée : ${version.build}` : `Version du site introuvable, utilisation de ${config.build} (config.json)`);
   log(`Mode ${ex.name} | disponible ${usd(state.available)} | ${state.positions.length} position(s) ouverte(s) | mint ${mintRate(proto.paper).toFixed(2)} PAPER/$`);
+  if (dashboard.poolText(proto)) log(`${dashboard.poolText(proto)}${SIM_WINDOW ? ' (simulée : --simuler-fenetre)' : ''}`);
   if (LIVE && Math.abs(budgetFrom - state.realized) > 0.005) log(`Budget repris d'un lancement précédent : ${usd(budgetFrom - state.realized)} déjà dépensés sur ${usd(config.maxNetLossUsd)}`);
   if (lt) {
     const l = await lt.state().catch(() => null);
     const mine = l && Math.abs(l.base - own) >= 1e-5 ? ` Ta position BTC manuelle (${l.base - own > 0 ? 'long' : 'short'} ${Math.abs(l.base - own).toFixed(5)} BTC) est conservée ; elle ne sera réduite que si une couverture a besoin de sa marge.` : '';
-    log(`Couverture Lighter active (${lt.name}, compte ${lkey.account_index}${l ? `, collatéral ${usd(l.equity)}` : ''}).${mine}`);
+    log(`Couverture Lighter active (${lt.name}${lkey ? `, compte ${lkey.account_index}` : ''}${l ? `, collatéral ${usd(l.equity)}` : ''}).${mine}`);
+    if (scalpOn) log(`Scalp de tendance Lighter actif : suit la tendance courte pendant chaque paire, arrêt si son résultat passe sous -${usd(config.lighterScalpMaxLossUsd)}.`);
   } else log('Pas de couverture Lighter : le bot reste uniquement sur Papertrade.');
   if (SCREEN) process.stdout.write('\x1b[2J');
 
@@ -262,14 +283,21 @@ async function main() {
     cycles++;
     const spent = start.realized - realizedAll();
     const total = state.paper - start.paper;
-    log(`Cycle terminé : PnL ${usd(pnl)}, +${Math.round(paper)} PAPER${paper > 0 ? `, $${(-pnl / paper).toFixed(4)} par PAPER` : ''} | cumul : coût ${usd(spent)}, ${Math.round(total)} PAPER`);
+    const scalpPart = config.lighterScalp && lt ? ` | scalp Lighter ${usd(scalpBook.pnl - scalpAtCycle)} (cumul ${usd(scalpBook.pnl)})` : '';
+    scalpAtCycle = scalpBook.pnl;
+    log(`Cycle terminé : PnL ${usd(pnl)}, +${Math.round(paper)} PAPER${paper > 0 ? `, $${(-pnl / paper).toFixed(4)} par PAPER` : ''} | cumul : coût ${usd(spent)}, ${Math.round(total)} PAPER${scalpPart}`);
     journal([new Date().toISOString(), price.toFixed(1), pnl.toFixed(4), paper.toFixed(2), paper > 0 ? (-pnl / paper).toFixed(5) : '', spent.toFixed(4), total.toFixed(2)]);
   };
 
-  const openPair = async (price) => {
+  // Seconds a cycle spends at the relayer and in the loop, besides waiting for the price to move.
+  const cycleOverhead = (view = risk.assess(1, config)) => 2 * view.delay + SETTLE_WAIT_MS / 1000 + config.pollSeconds;
+
+  // `mode` 'burst': the pool is under the cliff, the pair is sized for short rotations (lib/burst.js).
+  const openPair = async (price, mode) => {
     const market = btc();
     if (!market) return wait('marché BTC introuvable');
-    const size = sizePair(state.available, mkts, market, config, risk.minBustMove(config));
+    const minBust = risk.minBustMove(config);
+    let size = sizePair(state.available, mkts, market, config, minBust);
     if (size.reason) {
       // The balance may simply not be credited yet after a close: only give up if it lasts.
       lowBalanceSince = lowBalanceSince || Date.now();
@@ -277,6 +305,11 @@ async function main() {
       return wait('solde en cours de mise à jour');
     }
     lowBalanceSince = 0;
+    const view = risk.assess(1, config);
+    const rush = mode === 'burst' && !size.tooSlow ? burst.optimize({ available: state.available, mkts, market, proto, config, vol: view.vol, overhead: cycleOverhead(view), minBust }) : null;
+    if (rush && rush.reason) log(`Fenêtre LP < 2 M : pas de rotation courte possible (${rush.reason}), paire habituelle.`);
+    const short = rush && !rush.reason ? rush : null;
+    if (short) size = { ...size, margin: short.margin, leverage: short.leverage, bustMove: short.bustMove, usual: short.leverage };
     const notional = size.margin * size.leverage;
     // Orders are slow to land: even the lowest leverage allowed would leave too little room
     // to close before liquidation. This clears by itself when the relayer catches up, and does
@@ -286,12 +319,14 @@ async function main() {
     const gate = admission(mkts, market, price, notional);
     if (gate.wait) return wait(gate.wait);
     waitReason = null;
-    const expected = pairOutcome({ notional, move: size.bustMove * config.closeAt, market, paper: proto.paper, queueEmpty: proto.queueEmpty });
-    if (config.maxCostPerPaper && expected.costPerPaper > config.maxCostPerPaper)
-      return stop(`coût attendu $${expected.costPerPaper.toFixed(4)} par PAPER au-dessus du plafond $${config.maxCostPerPaper}`);
-    const slow = `clôtures lentes, délai estimé ${Math.round(risk.assess(1, config).delay)} s`;
+    const expected = short ? short.outcome : pairOutcome({ notional, move: size.bustMove * config.closeAt, market, paper: proto.paper, queueEmpty: proto.queueEmpty });
+    const tooDear = mode === 'burst' ? null : gates.costGate(expected, config, proto);
+    if (tooDear) return wait(tooDear.wait);
+    const slow = `clôtures lentes, délai estimé ${Math.round(view.delay)} s`;
     const lowered = size.tooSlow ? ` (${slow}, couvert par Lighter)` : size.leverage < size.usual ? ` (levier abaissé de x${size.usual} : ${slow})` : '';
-    log(`Ouverture paire BTC @ ${price.toFixed(1)} : ${usd(size.margin)} x${size.leverage} par jambe${lowered}, clôture visée à ${pct(size.bustMove * config.closeAt)} (attendu : coût ${usd(expected.cost)}, ~${Math.round(expected.minted)} PAPER)`);
+    if (short)
+      log(`Ouverture rotation courte (fenêtre LP < 2 M) @ ${price.toFixed(1)} : ${usd(size.margin)} x${size.leverage} par jambe, clôture dès ${usd(short.lossUsd)} de perte (${pct(short.move)}, ${Math.round(short.closeAt * 100)} % du chemin) : coût ${usd(expected.cost)}, ~${Math.round(expected.minted)} PAPER, ~${Math.round(short.cycleSeconds)} s par cycle`);
+    else log(`Ouverture paire BTC @ ${price.toFixed(1)} : ${usd(size.margin)} x${size.leverage} par jambe${lowered}, clôture visée à ${pct(size.bustMove * config.closeAt)} (attendu : coût ${usd(expected.cost)}, ~${Math.round(expected.minted)} PAPER)`);
     status = 'Ouverture de la paire';
     // Both legs are sent at once so that the relayer puts them in the same batch, executed at the
     // same price. Sent one after the other, the second leg waited for the first one's answer and
@@ -314,7 +349,7 @@ async function main() {
         log('Validité courte refusée, passage à 1 h de validité pour les ouvertures.');
       }
     }
-    noOpenBefore = Math.max(noOpenBefore, Date.now() + OPEN_COOLDOWN_MS);
+    noOpenBefore = Math.max(noOpenBefore, Date.now() + (short ? BURST_COOLDOWN_MS : OPEN_COOLDOWN_MS));
   };
 
   const draw = (price, pairs, single) => {
@@ -364,9 +399,35 @@ async function main() {
     }
     // Nothing left on the account: nothing of the bot's either (the owner may have closed it all).
     if (!pendingFill && !l.base && own) setOwn(0);
-    lighterView = { ...l, own, capacityUsd: capacity * price };
+    scalpBook.mark(price, scalpHeld);
+    if (scalpOn && scalpBook.pnl < -config.lighterScalpMaxLossUsd) {
+      scalpOn = false;
+      log(`Scalp Lighter arrêté pour cette session : son résultat (${usd(scalpBook.pnl)}) a passé la limite de -${usd(config.lighterScalpMaxLossUsd)}. La couverture d'urgence reste active.`);
+    }
+    lighterView = { ...l, own, capacityUsd: capacity * price, scalp: config.lighterScalp ? { on: scalpOn, held: scalpHeld, share: scalpShare, pnl: scalpBook.pnl } : null };
     if (pendingFill) return;
-    const p = hedge.plan({ positions, busted: busts, current: l.base, own, price, capacity, minTrade: 10 });
+    // Trend overlay: on one complete pair that is not being closed, never once a bust was crossed.
+    let overlay = 0;
+    if (scalpOn) {
+      const { pairs: complete } = buildPairs(positions);
+      const pair = complete.length === 1 && !busts.size && !(awaiting && awaiting.kind === 'close') ? complete[0] : null;
+      const s = pair && pairStatus(pair, price, proto);
+      const r = scalp.target({
+        pair,
+        price,
+        now: Date.now(),
+        vol: risk.assess(1, config).vol,
+        trend: risk.trend(scalp.TREND_WINDOW_MS),
+        closeMove: s ? s.bustMove * closeAt : 0,
+        capBtc: (Math.max(0, l.equity) * SCALP_MAX_LEVERAGE) / price,
+        current: scalpHeld,
+        state: scalpState,
+      });
+      scalpState = r.state;
+      scalpShare = r.share;
+      overlay = r.overlay;
+    }
+    const p = hedge.plan({ positions, busted: busts, current: l.base, own, price, capacity, minTrade: 10, overlay });
     if (!p.order) {
       imbalanceSince = 0;
       partialLogged = false;
@@ -383,7 +444,15 @@ async function main() {
       partialLogged = true;
     }
     const btc = (x) => (x ? `${x > 0 ? 'long' : 'short'} ${Math.abs(x).toFixed(5)} BTC` : 'rien');
-    const why = !p.need ? 'fin de la couverture' : busts.size ? 'une jambe Papertrade a passé son prix de liquidation' : 'jambe Papertrade sans sa jumelle';
+    const why = p.scalp
+      ? `scalp de tendance (force ${Math.round(scalpShare * 100)} %, côté ${p.hedge > 0 ? 'hausse' : 'baisse'}, au plus ${SCALP_MAX_LEVERAGE}x le collatéral Lighter)`
+      : !p.need
+      ? scalpHeld
+        ? 'fin du scalp de tendance'
+        : 'fin de la couverture'
+      : busts.size
+      ? 'une jambe Papertrade a passé son prix de liquidation'
+      : 'jambe Papertrade sans sa jumelle';
     const cut = Math.abs(p.baseline) < Math.abs(l.base - own) - 1e-6 ? `, ta position BTC manuelle réduite à ${btc(p.baseline)} pour libérer de la marge` : '';
     log(`Lighter : ${p.order > 0 ? 'achat' : 'vente'} de ${Math.abs(p.order).toFixed(5)} BTC (~${usd(Math.abs(p.order) * price)}), ${why}. Couverture du bot : ${btc(p.hedge)}${cut}.`);
     // Lighter fills or refuses within a second; the next reading shows which.
@@ -391,6 +460,10 @@ async function main() {
     pendingFill = { before: l.base, baseline: p.baseline };
     try {
       await lt.trade(p.order, p.reduceOnly);
+      // The overlay's part of the bot's position: replaced by any real hedge.
+      const held = p.scalp ? p.hedge : 0;
+      if (held !== scalpHeld) scalpBook.trade(held - scalpHeld, price);
+      scalpHeld = held;
     } catch (e) {
       log(`Lighter : ordre refusé (${e.message}), nouvel essai dans 15 s.`);
       hedgeRetryAt = Date.now() + 15000;
@@ -400,12 +473,25 @@ async function main() {
 
   // Slow-moving data is refreshed in the background so that it never delays a decision.
   const refreshMarkets = () =>
-    Promise.all([api.protocol(), api.markets()])
-      .then(([p, m]) => {
-        proto = p;
-        Object.assign(mkts, m);
-      })
+    api
+      .markets()
+      .then((m) => Object.assign(mkts, m))
       .catch(() => {});
+  // The pool decides the mint rate: under the cliff every dollar lost mints the flat rate, and the
+  // window can close within minutes as other farmers' losses refill it.
+  let protoBusy = false;
+  const refreshProto = () => {
+    if (protoBusy) return;
+    protoBusy = true;
+    readProto()
+      .then((p) => {
+        if (p.window && !proto.window) log(`${dashboard.poolText(p)} : clôture des pertes et rotations courtes.`);
+        if (!p.window && proto.window) log(`Fenêtre refermée : ${dashboard.poolText(p)}. Retour aux rotations habituelles.`);
+        proto = p;
+      })
+      .catch(() => {})
+      .finally(() => (protoBusy = false));
+  };
 
   // What each deploy changed goes to nouveautes-papertrade.txt; a failed read is retried at the next check.
   let changesError = null;
@@ -464,6 +550,7 @@ async function main() {
       if (Date.now() - stateAt > STALE_STATE_MS) throw e;
     }
     if (tick % REFRESH_TICKS === 0) refreshMarkets();
+    if (tick % PROTO_TICKS === 0 || proto.paper.lp < NEAR_CLIFF * proto.paper.threshold) refreshProto();
     if (tick % SITE_CHECK_TICKS === 0) refreshSite();
 
     const stateStale = Date.now() - stateAt > STALE_STATE_MS;
@@ -528,7 +615,16 @@ async function main() {
 
     // Close pairs that reached the threshold. This comes before every other wait: orders
     // pending at the relayer or an opening in progress must never delay a due close.
-    const due = pairs.filter((p) => pairStatus(p, price, proto).progress >= closeAt);
+    // Under the cliff, a pair is also due as soon as its loss is worth more now at the flat rate
+    // than at its usual close, or at its own best point for short rotations (lib/burst.js).
+    const windowDue = (pair) => {
+      if (!proto.window) return false;
+      const s = pairStatus(pair, price, proto);
+      if (burst.closeNowWorth({ status: s, proto, config, normalCloseAt: closeAt })) return true;
+      const best = burst.bestClose({ notional: s.loser.notional, bustMove: s.bustMove, market: s.loser.market, proto, config, vol: riskView.vol, overhead: cycleOverhead(riskView) });
+      return !!best && s.progress >= best.closeAt;
+    };
+    const due = pairs.filter((p) => pairStatus(p, price, proto).progress >= closeAt || windowDue(p));
     if (due.length) {
       if (Date.now() < closeRetryAt) return;
       // After a restart, a close sent earlier may still be queued: wait for it rather than resend.
@@ -537,7 +633,9 @@ async function main() {
         return;
       }
       const s = pairStatus(due[0], price, proto);
-      await closeAll(due.flatMap((p) => [p.long, p.short]), `mouvement ${pct(s.move)} (${Math.round(s.progress * 100)}% du chemin vers la liquidation, seuil ${Math.round(closeAt * 100)}%, délai estimé ${riskView.delay.toFixed(0)} s)`);
+      const where = `mouvement ${pct(s.move)} (${Math.round(s.progress * 100)}% du chemin vers la liquidation, seuil ${Math.round(closeAt * 100)}%, délai estimé ${riskView.delay.toFixed(0)} s)`;
+      const early = proto.window && s.progress < closeAt;
+      await closeAll(due.flatMap((p) => [p.long, p.short]), early ? `fenêtre LP < 2 M, perte de ${usd(s.now.loss)} encaissée à ${mintRate(proto.paper).toFixed(0)} PAPER/$ (~${Math.round(s.now.minted)} PAPER), ${where}` : where);
       return;
     }
 
@@ -606,23 +704,23 @@ async function main() {
       if (lt) lt.stop();
       process.exit(0);
     }
-    const spent = budgetFrom - realizedAll();
-    if (config.maxNetLossUsd && spent >= config.maxNetLossUsd)
-      stop(`budget atteint (${usd(spent)} dépensés sur ${usd(config.maxNetLossUsd)}) ; pour repartir, change maxNetLossUsd dans config.json`);
-    else if (mintRate(proto.paper) < config.minMintRate) stop(`taux de mint ${mintRate(proto.paper).toFixed(2)} sous le plancher ${config.minMintRate}`);
-    else if (LIVE && state.keyExpiry * 1000 < Date.now() + 2 * 3600e3) stop('clé de session bientôt expirée, relance setup.bat');
-    if (stopReason) return;
-
-    // Conditions that can clear by themselves: wait rather than stop.
-    if (version.formatOk === false) return wait('le format des ordres a changé sur le site Papertrade, le bot doit être mis à jour');
-    if (stateStale || state.lag * 1000 > STALE_STATE_MS) return wait('état du compte en retard côté Papertrade');
-    if (!proto.queueEmpty && config.pauseWhenQueueActive) return wait('queue de paiement active');
-    if (load && load.level === 'HIGH') return wait(`relayer congestionné (${load.pending} ordres en attente)`);
+    const gate = gates.whenFlat({
+      live: LIVE,
+      spent: budgetFrom - realizedAll(),
+      config,
+      proto,
+      keyExpiry: state.keyExpiry,
+      formatOk: version.formatOk,
+      stale: stateStale || state.lag * 1000 > STALE_STATE_MS,
+      load,
+    });
+    if (gate.stop) return stop(gate.stop);
+    if (gate.wait) return wait(gate.wait);
     if (Date.now() < noOpenBefore) {
       if (!waitReason) status = 'Pause avant la prochaine ouverture';
       return;
     }
-    await openPair(price);
+    await openPair(price, gate.open);
   };
 
   for (;;) {

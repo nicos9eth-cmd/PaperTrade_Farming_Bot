@@ -4,6 +4,8 @@ Bot qui farme le token PAPER sur [Papertrade](https://exchange.papertrade.xyz) t
 
 **Le principe.** Papertrade donne du PAPER quand on perd un trade. Le bot ouvre en même temps un long et un short BTC de même taille : l'un perd (et rapporte du PAPER), l'autre gagne presque autant. Il ferme les deux avant que le perdant soit liquidé, puis recommence. Le coût réel d'un cycle est la petite part que Papertrade prélève sur le trade gagnant.
 
+**La fenêtre à 100 PAPER par dollar.** Le taux de mint dépend de la réserve (LP) de Papertrade. Tant que le LP est au-dessus de 2 M $, le taux baisse avec le temps : ~12 PAPER par dollar perdu mi-octobre 2026. Si le LP passe sous 2 M $, chaque dollar perdu rapporte 100 PAPER. Le bot surveille ce seuil en permanence. Il encaisse alors la paire en cours dès que ça vaut mieux que d'attendre, puis enchaîne des rotations courtes tant que la fenêtre reste ouverte (voir « Fenêtre LP < 2 M »).
+
 **Ce n'est pas gratuit.** Chaque cycle coûte environ 3 à 6 % du capital engagé. Le PAPER ne peut pas être vendu pour l'instant, il rapporte seulement des dividendes en USDC quand il est staké. N'utilise que de l'argent que tu acceptes de dépenser.
 
 **Outil expérimental, sans aucune garantie.** Il dépend d'une interface de Papertrade non documentée qui peut changer du jour au lendemain, et il passe des ordres avec de vrais fonds. Tu l'utilises à tes risques : tu peux perdre tout ce que tu engages, sur Papertrade comme sur Lighter. Voir `LICENSE` (MIT).
@@ -37,6 +39,8 @@ Double-clique **`bot-simulation.bat`**. Le bot tourne au vrai prix du BTC, avec 
 Pour simuler avec ton propre montant, mets par exemple `"simulationCapital": 250` dans `config.json`. Remets `null` après le test.
 
 Un cycle ne se termine que quand le BTC a bougé d'environ 0,6 à 1 % (jusqu'à 2 % avec le levier prudent). Si le marché est calme, il peut ne rien se passer pendant des heures : c'est normal.
+
+Pour voir ce que fait le bot pendant une fenêtre à 100 PAPER/$ sans attendre qu'elle arrive : ouvre un terminal dans le dossier du bot et tape `node bot.js --simuler-fenetre`. Ajoute `--simuler-lighter` pour simuler aussi un compte Lighter de 50 $ (scalp de tendance compris, s'il est activé dans `config.json`).
 
 ## 4. Autoriser le bot sur ton compte
 
@@ -75,18 +79,18 @@ La suite explique les mêmes réglages pour ceux qui préfèrent modifier **`con
 
 ### Combien ça coûte et combien ça rapporte
 
-Le bot met **tout ton solde disponible** en jeu, moitié par jambe. Estimations par cycle, au taux de mint actuel (~21 PAPER par dollar perdu, en baisse avec le temps) :
+Le bot met **tout ton solde disponible** en jeu, moitié par jambe. Estimations par cycle au levier normal, au taux de mint du 18/10/2026 (~11,8 PAPER par dollar perdu, en baisse avec le temps) :
 
 | Solde sur Papertrade | Coût d'un cycle | PAPER gagnés par cycle |
 |---|---|---|
-| 25 $ | 0,90 – 1,40 $ | 120 – 210 |
-| 50 $ | 1,80 – 2,75 $ | 250 – 420 |
-| 100 $ | 3,50 – 5,50 $ | 490 – 840 |
-| 250 $ | 9 – 14 $ | 1 200 – 2 100 |
-| 500 $ | 18 – 28 $ | 2 500 – 4 200 |
-| 1 000 $ | 35 – 55 $ | 4 900 – 8 400 |
+| 25 $ | 0,90 – 1,40 $ | 70 – 120 |
+| 50 $ | 1,75 – 2,75 $ | 140 – 235 |
+| 100 $ | 3,50 – 5,50 $ | 275 – 470 |
+| 250 $ | 9 – 14 $ | 690 – 1 170 |
+| 500 $ | 18 – 28 $ | 1 380 – 2 350 |
+| 1 000 $ | 35 – 55 $ | 2 760 – 4 690 |
 
-Le prix de revient tourne autour de **0,007 $ par PAPER**, quel que soit le montant. Le haut de chaque fourchette correspond à un marché calme, où le bot ferme tard. Le bas correspond à un marché agité ou un réseau congestionné, où il ferme plus tôt par sécurité : moins de PAPER par cycle, pour un prix de revient un peu plus élevé. Le nombre de cycles par jour dépend de la volatilité du BTC, en général entre 0 et 3.
+Le prix de revient tourne autour de **0,012 $ par PAPER**, quel que soit le montant. Il monte à mesure que le taux de mint baisse. Au-delà de `maxCostPerPaper`, ou sous `minMintRate`, le bot se met **en veille** : il n'ouvre plus, mais il continue de surveiller le LP et repart tout seul si une fenêtre à 100 PAPER/$ s'ouvre. Le haut de chaque fourchette correspond à un marché calme, où le bot ferme tard. Le bas correspond à un marché agité ou un réseau congestionné, où il ferme plus tôt par sécurité : moins de PAPER par cycle, pour un prix de revient un peu plus élevé. Le nombre de cycles par jour dépend de la volatilité du BTC, en général entre 0 et 3.
 
 ### Le réglage le plus important : le budget
 
@@ -145,8 +149,11 @@ Remplace seulement ces lignes dans `config.json`, sans toucher au reste.
 |---|---|---|
 | `maxNetLossUsd` | **Budget** total en $ (voir plus haut). | 25 |
 | `maxMarginPerLeg` | Marge maximale par jambe en $, `null` pour utiliser tout le solde. Minimum 10. | null |
-| `maxCostPerPaper` | Le bot n'ouvre plus si un PAPER coûterait plus que ce montant en $. | 0.012 |
-| `minMintRate` | Le bot n'ouvre plus si Papertrade donne moins de ce nombre de PAPER par dollar perdu. | 10 |
+| `maxCostPerPaper` | Le bot se met en veille si un PAPER coûterait plus que ce montant en $ (hors fenêtre). | 0.012 |
+| `minMintRate` | Le bot se met en veille si Papertrade donne moins de ce nombre de PAPER par dollar perdu (hors fenêtre). | 10 |
+| `burstMaxCostPerPaper` | Pendant une fenêtre LP < 2 M : prix maximum d'un PAPER pour les rotations courtes. Plus bas = rotations plus longues et moins de PAPER par heure. | 0.004 |
+| `lighterScalp` | Scalp de tendance sur Lighter pendant chaque paire (expérimental, voir « Couverture sur Lighter »). | false |
+| `lighterScalpMaxLossUsd` | Perte en $ du scalp, sur une session, au-delà de laquelle le bot l'arrête. | 5 |
 | `closeAt` | Part du chemin vers la liquidation à laquelle le bot ferme au plus tard (0.85 = 85 %). | 0.85 |
 | `minCloseAt` | Jusqu'où il peut avancer la clôture quand le marché s'agite ou que le réseau est congestionné. | 0.5 |
 | `targetMove` | Mouvement de prix visé avant clôture (0.01 = 1 %). Plus grand = levier plus bas (voir « Levier normal ou prudent »). Avec peu de capital, la taille minimale de Papertrade impose un levier plancher. | 0.01 |
@@ -170,7 +177,7 @@ Laisse la fenêtre noire ouverte. Pour arrêter : **Ctrl+C**, ou ferme la fenêt
 
 ### Lire le tableau de bord
 
-- **MARCHÉ** : prix du BTC, taux de mint (PAPER gagné par dollar perdu) et place libre dans l'open interest. Si un côté affiche « PLEIN », le bot attend avant d'ouvrir.
+- **MARCHÉ** : prix du BTC, taux de mint (PAPER gagné par dollar perdu), LP de Papertrade face au seuil de 2 M $ (« FENÊTRE OUVERTE » en vert quand il est passé dessous) et place libre dans l'open interest. Si un côté affiche « PLEIN », le bot attend avant d'ouvrir.
 - **RELAYER** : la congestion chez Papertrade (les mêmes chiffres que l'onglet Status du site).
 - **COMPTE** : ton solde disponible, ta marge engagée et ton PAPER.
 - **PAIRE** : la paire en cours. La jauge avance vers la liquidation ; le `|` marque l'endroit où le bot ferme.
@@ -178,6 +185,27 @@ Laisse la fenêtre noire ouverte. Pour arrêter : **Ctrl+C**, ou ferme la fenêt
 - **ÉTAT** : ce que le bot fait, ou pourquoi il attend.
 
 Tout est aussi écrit dans `bot.log`, et chaque cycle dans `journal.csv` (ouvrable avec Excel).
+
+## Fenêtre LP < 2 M (100 PAPER par dollar)
+
+Papertrade calcule le taux de mint d'après sa réserve (LP), celle qui paie les gains des traders. Au-dessus de 2 M $, le taux suit une courbe qui baisse avec le temps (~11,8 PAPER par dollar perdu le 18/10/2026). **Sous 2 M $, chaque dollar perdu rapporte 100 PAPER**, soit plus de 8 fois plus. Le tableau de bord montre le LP et la distance au seuil (ligne MARCHÉ).
+
+Le LP ne passe sous 2 M $ que si les traders gagnent en tout près de 3 M $ de plus que ce qu'ils perdent. C'est rare : ça ne s'est pas produit depuis le lancement. La fenêtre se referme vite, parce que les pertes de tous ceux qui farment remplissent la réserve. Le bot la guette donc en permanence, sans rien dépenser :
+
+- il relit le LP toutes les 10 s, et toutes les 2 s quand il s'approche du seuil ;
+- dès que la fenêtre s'ouvre, il **clôture la paire en cours** si sa perte, mintée à 100 PAPER/$, rapporte déjà autant que sa clôture habituelle au taux bas. Avec le taux du 18/10, c'est le cas dès ~10 % du chemin vers la liquidation ;
+- il **enchaîne des rotations courtes**. Il choisit le levier et le point de clôture qui donnent le plus de PAPER par heure, sans dépasser `burstMaxCostPerPaper` par PAPER, et en gardant assez de distance à la liquidation pour les délais du moment. Il ne relance pas plus d'un cycle toutes les 20 s. Le journal indique, pour ta taille, la perte en $ à laquelle chaque rotation se clôture ;
+- quand le LP repasse au-dessus de 2 M $, la paire en cours reprend les règles habituelles.
+
+Estimations par rotation dans la fenêtre, marché calme (`reglages.bat` donne les chiffres pour ton solde) :
+
+| Solde | Levier | Clôture dès | Coût | PAPER | Durée | Budget dépensé par heure |
+|---|---|---|---|---|---|---|
+| 25 $ | x587 | 3,65 $ de perte | 1,43 $ | ~360 | ~70 s | ~74 $ |
+| 100 $ | x587 | 14,60 $ de perte | 5,73 $ | ~1 430 | ~70 s | ~300 $ |
+| 1 000 $ | x587 | 146 $ de perte | 57 $ | ~14 300 | ~70 s | ~3 000 $ |
+
+Le PAPER y coûte ~0,004 $, trois fois moins qu'en temps normal. Mais **le budget part vite** : c'est le même `maxNetLossUsd` que d'habitude. Prévois-le en conséquence.
 
 ## Couverture sur Lighter (optionnel)
 
@@ -203,6 +231,18 @@ Ensuite, `bot-live.bat` affiche une ligne **LIGHTER** dans le tableau de bord. S
 - Le résultat sur Lighter (gain ou perte de la couverture, funding) est compté dans les cycles, la session et le budget.
 - La clé du bot est dans `.lighter-key.json` : **ne partage jamais ce fichier**. Elle peut passer des ordres et renvoyer des fonds vers ta propre adresse uniquement.
 
+### Scalp de tendance sur Lighter (expérimental, désactivé par défaut)
+
+Avec `"lighterScalp": true` (ou la question 5 de `reglages.bat`, en mode P), le bot ne laisse plus Lighter vide pendant une paire. Il y suit la tendance courte du BTC : en hausse, il achète sur Lighter, ce qui compense la jambe short qui perd ; en baisse, il vend.
+
+- **La taille suit la netteté de la tendance, pas la volatilité.** Un prix qui file dans un sens est ce qui rapporte. Un prix qui fait des allers-retours rapides est ce qui coûte le plus (achats en haut, ventes en bas). Le bot mesure donc la tendance des 2 dernières minutes : rien si le prix hésite, jusqu'à une jambe entière si la tendance est nette.
+- **Il ne change de côté qu'une fois sorti d'une bande autour du prix d'entrée** de la paire. La bande s'élargit quand la volatilité monte. Il garde ensuite son côté au moins 20 s, ce qui évite le ping-pong.
+- **Il reste petit** : jamais plus de 10 fois ton collatéral Lighter, et il ne touche jamais ta propre position Lighter pour se faire de la place.
+- **La couverture d'urgence reste prioritaire.** Si une jambe Papertrade est liquidée ou reste seule, le bot remplace le scalp par la couverture de la jambe restante, en un seul ordre.
+- **Il a son propre résultat**, affiché sur la ligne LIGHTER et à chaque fin de cycle (« scalp Lighter »). Il compte dans le budget. S'il perd plus que `lighterScalpMaxLossUsd` sur une session, le bot l'arrête jusqu'au prochain lancement.
+
+À savoir honnêtement : le scalp ne rapporte **pas de PAPER**. Sur un marché qui part au hasard, il gagne en moyenne à peu près zéro, moins le coût des ordres. Il ne vaut que si le BTC tend à prolonger ses mouvements courts. Son résultat affiché à part sert à juger s'il vaut la peine pour toi.
+
 ## Ce que le bot fait tout seul
 
 - Il ferme plus tôt quand le marché est agité, que la file du relayer s'allonge ou que les ordres sont lents, pour éviter la liquidation. Il n'ouvre pas de paire quand la congestion est « HIGH ».
@@ -213,7 +253,8 @@ Ensuite, `bot-live.bat` affiche une ligne **LIGHTER** dans le tableau de bord. S
 - Il continue malgré les petites coupures internet.
 - Si une seule jambe s'ouvre, il la referme, attend de plus en plus longtemps, et abandonne après 3 fois de suite.
 - Il gère **toutes** les positions BTC du compte, même celles ouvertes à la main : une position sans son opposée est fermée. **N'ouvre pas de BTC à la main pendant qu'il tourne.**
-- Il arrête d'ouvrir quand le budget est atteint, quand le PAPER devient trop cher, quand le solde ne suffit plus, ou après 5 erreurs de suite. Les positions déjà ouvertes restent surveillées jusqu'à leur clôture.
+- Il se met en veille quand le PAPER devient trop cher ou que le taux de mint passe sous `minMintRate`. Il repart tout seul si le LP passe sous 2 M $ (100 PAPER par dollar perdu).
+- Il arrête d'ouvrir quand le budget est atteint, quand le solde ne suffit plus, ou après 5 erreurs de suite. Les positions déjà ouvertes restent surveillées jusqu'à leur clôture.
 
 ## Ce qu'il ne fait pas
 
@@ -234,6 +275,9 @@ Ensuite, `bot-live.bat` affiche une ligne **LIGHTER** dans le tableau de bord. S
 | `Mauvais compte sélectionné dans le wallet` | Choisis le compte qui a tes fonds Papertrade dans ton wallet, puis recharge la page. |
 | `capital insuffisant` | Il faut au moins 10 USDC par jambe **déposés sur Papertrade**. |
 | `budget atteint` | Normal : relance `reglages.bat` (ou augmente `maxNetLossUsd`) si tu veux continuer. |
+| `veille, taux de mint … sous le plancher` ou `veille, coût attendu …` | Normal quand le taux de mint baisse : le bot ne dépense rien et surveille le LP. Il repart tout seul pendant une fenêtre à 100 PAPER/$. Pour farmer quand même au taux bas, baisse `minMintRate` ou monte `maxCostPerPaper` (avec `reglages.bat`). |
+| `FENÊTRE OUVERTE : LP … sous 2.00 M` | Le LP est passé sous 2 M $ : rotations courtes à 100 PAPER/$, rien à faire. Surveille le budget. |
+| `Scalp Lighter arrêté pour cette session` | Le scalp a perdu plus que `lighterScalpMaxLossUsd`. La couverture d'urgence continue. Il reprend au prochain lancement. |
 | `le budget restant couvre moins d'un cycle` | Lance `reglages.bat` pour adapter le budget à ton solde. |
 | `PAPER staké … minimum de 1000` | Stake du PAPER sur le site, sinon le relayer peut refuser tes ordres. |
 | `open interest … plein` / `relayer congestionné` | Normal, le bot attend tout seul. |
@@ -271,4 +315,4 @@ Envoie-lui le lien GitHub, ou double-clique **`partager.bat`** : il crée `parta
 
 Ce bot n'est pas un produit officiel de Papertrade. Il parle au même service que le site, dans un format relevé sur le site lui-même, qui peut changer sans prévenir. Lis les conditions d'utilisation de Papertrade avant de t'en servir.
 
-Vérifier les calculs : `node test/economics.test.js` et `node test/risk.test.js`.
+Vérifier les calculs : `npm test` (dans un terminal ouvert dans le dossier du bot).

@@ -9,6 +9,7 @@
   "maxNetLossUsd": 25,
   "minMintRate": 10,
   "maxCostPerPaper": 0.012,
+  "burstMaxCostPerPaper": 0.004,
   "pauseWhenQueueActive": true,
   "pollSeconds": 2,
   "simulationCapital": null,
@@ -19,5 +20,7 @@
   "oiSafetyFactor": 3,
   "maxOrphanLegs": 3,
   "riskSigmas": 4,
-  "baseDelaySeconds": 5
+  "baseDelaySeconds": 5,
+  "lighterScalp": false,
+  "lighterScalpMaxLossUsd": 5
 }

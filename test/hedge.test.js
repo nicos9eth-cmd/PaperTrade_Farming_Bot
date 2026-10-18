@@ -67,4 +67,28 @@ p = plan({ positions: [long, shortLater], busted: bustTracker(), current: 0, own
 assert.strictEqual(p.order, 0);
 assert.ok(Math.abs(exposure([long, shortLater], bustTracker())) * 81900 < 1);
 
+// Trend overlay (lib/scalp.js) on a complete pair: the bot's position follows it.
+const flatT = bustTracker();
+flatT.update([long, short], 80900);
+p = plan({ positions: [long, short], busted: flatT, current: 0, own: 0, price: 80900, overlay: -leg, ...opts });
+assert.ok(near(p.order, -leg) && p.scalp && !p.partial, JSON.stringify(p));
+// Legs at slightly different prices (exposure below Lighter's minimum): the overlay still applies.
+p = plan({ positions: [long, shortLater], busted: bustTracker(), current: 0, own: 0, price: 81900, overlay: 0.02, ...opts });
+assert.ok(near(p.order, 0.02) && p.scalp);
+// Overlay back to nothing: the bot unwinds its own part only, the owner's short stays.
+p = plan({ positions: [long, short], busted: flatT, current: MANUAL - leg, own: -leg, price: 80900, overlay: 0, ...opts });
+assert.ok(near(p.order, leg) && near(p.target, MANUAL), JSON.stringify(p));
+// The long is liquidated while the overlay is short with the fall: the emergency hedge takes over
+// in one order, from short one leg to long one leg against the surviving short.
+flatT.update([long, short], 80600);
+p = plan({ positions: [long, short], busted: flatT, current: -leg, own: -leg, price: 80600, overlay: -leg, ...opts });
+assert.ok(near(p.order, 2 * leg) && near(p.hedge, leg) && !p.scalp, JSON.stringify(p));
+// Short of margin, the overlay never cuts the owner's own position (only an emergency may): it
+// shrinks to what is left.
+p = plan({ positions: [long, short], busted: bustTracker(), current: MANUAL, own: 0, price: 81500, overlay: -leg, capacity: 0.0093, minTrade: 10 });
+assert.ok(near(p.baseline, MANUAL) && near(p.hedge, -0.0049) && near(p.order, -0.0049), JSON.stringify(p));
+// A lone leg: the emergency hedge, whatever the overlay says.
+p = plan({ positions: [short], busted: bustTracker(), current: 0, own: 0, price: 81500, overlay: -leg, ...opts });
+assert.ok(near(p.order, leg) && !p.scalp);
+
 console.log('hedge: ok (ton short intact sans couverture, jambe liquidée couverte puis débouclée, short réduit seulement si la marge manque)');

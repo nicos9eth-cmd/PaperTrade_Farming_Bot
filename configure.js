@@ -13,6 +13,7 @@ const { advise, coverage } = require('./lib/advice');
 const { cycleRange } = require('./lib/sizing');
 const { tolerableDelay } = require('./lib/risk');
 const { mintRate } = require('./lib/economics');
+const { poolText } = require('./lib/dashboard');
 
 const usd = (n) => n.toFixed(2) + ' $';
 const pct = (n) => (n * 100).toFixed(2) + ' %';
@@ -145,6 +146,7 @@ async function main() {
   const load = relayer.current();
   console.log(`Relayer en ce moment : ${load ? `congestion ${load.level}, ${load.pending} ordre(s) en attente, ~${minutes(load.clearSeconds)} pour vider la file` : 'congestion inconnue'}.`);
   console.log(`Taux de mint : ${mintRate(proto.paper).toFixed(2)} PAPER par dollar perdu (il baisse avec le temps).`);
+  if (poolText(proto)) console.log(`Réserve de Papertrade : ${poolText(proto)}.`);
 
   const a = advise({ balance, mkts, market, proto, config, defaults, lighterEquity });
   if (a.reason) throw new Error(a.reason);
@@ -155,7 +157,13 @@ async function main() {
   console.log(show(a.pick === 'prudent' ? 'Prudent' : 'Normal', a.chosen, a.cover, config));
   console.log(`Couverture Lighter : ${coverText(a.cover)}.`);
   console.log(`Budget : ${a.budget} $ au total (~10 cycles), puis le bot s'arrête.`);
-  console.log(`Prix maximum du PAPER : ${a.maxCostPerPaper} $ (aujourd'hui ~${a.chosen.late.costPerPaper.toFixed(4)} $ ; le bot arrête d'ouvrir au-delà).`);
+  console.log(`Prix maximum du PAPER : ${a.maxCostPerPaper} $ (aujourd'hui ~${a.chosen.late.costPerPaper.toFixed(4)} $ ; au-delà le bot se met en veille).`);
+  const w = a.window;
+  if (w && !w.reason) {
+    console.log(`Si le LP passe sous ${(proto.paper.threshold / 1e6).toFixed(0)} M (${proto.paper.flatRate} PAPER par dollar perdu), le bot encaisse la paire en cours puis enchaîne des rotations courtes :`);
+    console.log(`   levier x${w.leverage}, clôture dès ${usd(w.lossUsd)} de perte, ~${Math.round(w.cycleSeconds)} s par cycle, ~${Math.round(w.outcome.minted)} PAPER pour ${usd(w.outcome.cost)} (${w.outcome.costPerPaper.toFixed(4)} $ par PAPER).`);
+    console.log(`   Le budget part alors vite : ~${usd((w.outcome.cost * 3600) / w.cycleSeconds)} par heure de fenêtre.`);
+  }
 
   let choice;
   for (;;) {
@@ -210,6 +218,25 @@ async function main() {
     console.log(`\n4) Au-delà de quel prix par PAPER le bot doit-il arrêter d'ouvrir ? (aujourd'hui ~${picked.late.costPerPaper.toFixed(4)} $)`);
     const max = await askAmount(`   Prix, ou Entrée pour ${ceiling} $ : `, (v) => (v !== null && v < picked.late.costPerPaper ? 'C\'est moins que le prix actuel : le bot n\'ouvrirait plus rien.' : null));
     next.maxCostPerPaper = max === null ? ceiling : max;
+    if (lt) {
+      console.log(`\n5) Scalp de tendance sur Lighter : pendant chaque paire, le bot suit la tendance courte du BTC sur Lighter (jusqu'à 10x ton collatéral Lighter).`);
+      console.log('   Expérimental : il ne rapporte pas de PAPER, il peut gagner quand le prix file dans un sens et perdre quand il hésite. Il s\'arrête seul au-delà de la perte réglée.');
+      for (;;) {
+        const raw = await ask(`   Activer ? O/N (Entrée = ${config.lighterScalp ? 'O' : 'N'}, inchangé) : `);
+        if (raw === null) throw new Error('saisie interrompue');
+        const r = raw.trim().toLowerCase();
+        if (!r) break;
+        if (['o', 'oui', 'n', 'non'].includes(r)) {
+          next.lighterScalp = r.startsWith('o');
+          break;
+        }
+        console.log('  Tape O ou N.');
+      }
+      if (next.lighterScalp ?? config.lighterScalp) {
+        const loss = await askAmount(`   Perte maximale du scalp par session, ou Entrée pour ${config.lighterScalpMaxLossUsd} $ : `, () => null);
+        if (loss !== null) next.lighterScalpMaxLossUsd = loss;
+      }
+    }
   }
 
   const lines2 = [
@@ -218,6 +245,10 @@ async function main() {
     ['Budget', `${config.maxNetLossUsd} $`, `${next.maxNetLossUsd} $`],
     ['Prix max du PAPER', `${config.maxCostPerPaper} $`, `${next.maxCostPerPaper} $`],
   ];
+  if (lt) {
+    const scalpText = (on, loss) => (on ? `activé (perte max ${loss} $)` : 'désactivé');
+    lines2.push(['Scalp Lighter', scalpText(config.lighterScalp, config.lighterScalpMaxLossUsd), scalpText(next.lighterScalp ?? config.lighterScalp, next.lighterScalpMaxLossUsd ?? config.lighterScalpMaxLossUsd)]);
+  }
   console.log('\nChangements :');
   for (const [label, before, after] of lines2) console.log(`  ${label.padEnd(20)} ${before === after ? before + ' (inchangé)' : `${before}  ->  ${after}`}`);
   const answer = await ask('\nEnregistrer ces réglages dans config.json ? (O/n) ');
