@@ -395,11 +395,8 @@ async function main() {
   // Keeps the Lighter BTC position opposite to the net Papertrade exposure (lib/hedge.js). Runs in
   // the background, one at a time: a Lighter order never delays a Papertrade close, and a Lighter
   // failure never stops the Papertrade side.
-  // The pair the reactive cover follows: exactly one complete pair, not being closed, no bust crossed.
-  const coverPair = (positions) => {
-    const { pairs: complete } = buildPairs(positions);
-    return complete.length === 1 && !busts.size && !(awaiting && awaiting.kind === 'close') ? complete[0] : null;
-  };
+  // The pair the reactive cover follows, until its close is executed (lib/scalp.js).
+  const coverPair = (positions) => scalp.coveredPair(buildPairs(positions).pairs, busts.size);
   const hedgeTick = async (price, positions) => {
     const l = await lt.state();
     const capacity = (Math.max(0, l.equity) * lighterLib.MAX_LEVERAGE * 0.9) / price;
@@ -421,7 +418,7 @@ async function main() {
     }
     lighterView = { ...l, own, capacityUsd: capacity * price, scalp: config.lighterScalp ? { on: scalpOn, held: scalpHeld, pnl: scalpBook.pnl } : null };
     if (pendingFill) return;
-    // Reactive cover: on one complete pair that is not being closed, never once a bust was crossed.
+    // Reactive cover: on one complete pair until its close is executed, never once a bust was crossed.
     let overlay = 0;
     if (scalpOn) {
       const pair = coverPair(positions);

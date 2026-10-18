@@ -6,7 +6,7 @@
 // only the spread and the price drift during the reaction, so the reaction is fed by a live price.
 
 const assert = require('assert');
-const { cover, ledger, MIN_HOLD_MS } = require('../lib/scalp');
+const { cover, coveredPair, ledger, MIN_HOLD_MS } = require('../lib/scalp');
 
 const ENTRY = 80000;
 const legOf = (isLong) => ({ id: isLong ? 'L' : 'S', isLong, entry: ENTRY, notional: 20.36 * 61 });
@@ -80,6 +80,14 @@ assert.strictEqual(s.overlay, CAP);
 r = run([ENTRY, ...line(ENTRY, ENTRY * 0.99, 500)]);
 assert.strictEqual(r.orders, 1);
 assert.ok(r.pnl > CAP * ENTRY * 0.0098, `pnl ${r.pnl}`);
+
+// Which pair the cover follows: exactly one complete pair, no leg past its bust. A pair whose close
+// waits in Papertrade's queue is still followed (the owner's choice, 2026-10-18): the cover ends
+// with the close actually executed, not with the request. A bust hands over to the emergency hedge.
+assert.strictEqual(coveredPair([pair], 0), pair);
+assert.strictEqual(coveredPair([pair], 1), null);
+assert.strictEqual(coveredPair([], 0), null);
+assert.strictEqual(coveredPair([pair, pair], 0), null);
 
 // The ledger: mark to market of the cover, less an estimated spread on each trade.
 const book = ledger();
