@@ -60,8 +60,11 @@ const UNKNOWN_QUEUE_DELAY_S = 5; // assumed relayer backlog when the congestion 
 const MAX_ERRORS = 5;
 const REFRESH_TICKS = 15;
 const SITE_CHECK_TICKS = 300;
+const PAPER_PRICE_EVERY_MS = 30000;
 const PAPER_PRICE_STALE_MS = 10 * 60000; // an older PAPER price is not shown
-const RELEASE_CHECK_TICKS = 900; // latest published version, every 30 min (GitHub allows 60 reads an hour)
+// Latest published version. Timed by the clock, not in ticks: a tick lasts pollSeconds plus the step
+// itself, so 900 ticks took ~45 min. GitHub allows 60 unauthenticated reads an hour per address.
+const RELEASE_CHECK_MS = 10 * 60000;
 // Refusals that only mean "not now": the bot waits and retries instead of counting an error.
 const TEMPORARY = new Set(['openInterest', 'tradingPaused', 'marketPaused', 'funding']);
 
@@ -233,6 +236,7 @@ async function main() {
   // PAPER's pre-market price (lib/api.js), for display only: no decision depends on it.
   let paperPx = null;
   let paperPxAt = 0;
+  let paperAskedAt = Date.now();
   const paperPrice = () => (Date.now() - paperPxAt < PAPER_PRICE_STALE_MS ? paperPx : null);
   const refreshPaperPrice = () =>
     api
@@ -245,6 +249,7 @@ async function main() {
   // The version this process runs, read once: an update installed meanwhile only applies after a restart.
   const running = release.localVersion();
   let latest = null;
+  let releaseAt = Date.now();
   const refreshRelease = () =>
     release
       .latest()
@@ -618,8 +623,14 @@ async function main() {
     if (tick % REFRESH_TICKS === 0) refreshMarkets();
     if (tick % PROTO_TICKS === 0 || proto.paper.lp < NEAR_CLIFF * proto.paper.threshold) refreshProto();
     if (tick % SITE_CHECK_TICKS === 0) refreshSite();
-    if (tick % REFRESH_TICKS === 0) refreshPaperPrice();
-    if (tick % RELEASE_CHECK_TICKS === 0) refreshRelease();
+    if (Date.now() - paperAskedAt >= PAPER_PRICE_EVERY_MS) {
+      paperAskedAt = Date.now();
+      refreshPaperPrice();
+    }
+    if (Date.now() - releaseAt >= RELEASE_CHECK_MS) {
+      releaseAt = Date.now();
+      refreshRelease();
+    }
 
     const stateStale = Date.now() - stateAt > STALE_STATE_MS;
     const btcPositions = state.positions.filter((p) => p.market && p.market.coin === 'BTC');

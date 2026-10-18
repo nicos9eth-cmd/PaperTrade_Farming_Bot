@@ -300,7 +300,7 @@ Double-clique **`mettre-a-jour.bat`**. Il télécharge la dernière version depu
 
 Ensuite, si le bot tournait, ferme sa fenêtre et relance `bot-live.bat` : la nouvelle version n'est utilisée qu'au redémarrage.
 
-Depuis la v1.9.1, le bot vérifie lui-même toutes les 30 min s'il existe une nouvelle version. Si c'est le cas, sa version s'affiche en rouge sur la ligne ÉTAT et le journal l'écrit.
+Depuis la v1.9.1, le bot vérifie lui-même au démarrage puis toutes les 10 min s'il existe une nouvelle version. Si c'est le cas, sa version s'affiche en rouge sur la ligne ÉTAT et le journal l'écrit.
 
 `mettre-a-jour.bat` existe depuis la v1.6. Pour passer d'une version plus ancienne à la v1.6 (une seule fois) :
 
