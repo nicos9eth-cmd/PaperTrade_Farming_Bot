@@ -8,45 +8,22 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { fetchText } = require('./lib/api');
+const release = require('./lib/release');
 
-const REPO = 'nicos9eth-cmd/PaperTrade_Farming_Bot';
+const { REPO, get, newer, shown } = release;
 const ROOT = __dirname;
 // In the repo, but holding the owner's settings: new settings get their defaults from lib/config.js.
 const KEEP = new Set(['config.json']);
-
-const version = (s) => (String(s).match(/^v?(\d+)\.(\d+)(?:\.(\d+))?$/) || []).slice(1, 4).map((n) => Number(n || 0));
-const newer = (a, b) => {
-  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] > b[i];
-  return false;
-};
-
-async function get(host, p) {
-  const res = await fetchText(host, p, { headers: { Accept: host === 'api.github.com' ? 'application/vnd.github+json' : '*/*' }, deadline: 30000 });
-  if (res.status !== 200) throw new Error(`${host}${p} -> HTTP ${res.status}`);
-  return res.text;
-}
-
-function localVersion() {
-  try {
-    return version(JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version);
-  } catch (e) {
-    return [0, 0, 0];
-  }
-}
 
 async function main() {
   // The owner's working folder is the source of the published copies, not a copy of them.
   if (fs.existsSync(path.join(ROOT, 'CLAUDE.md'))) throw new Error('ce dossier est le dossier de développement, il ne se met pas à jour depuis GitHub.');
 
   console.log('Recherche de la dernière version...');
-  const tags = JSON.parse(await get('api.github.com', `/repos/${REPO}/tags?per_page=100`))
-    .map((t) => ({ name: t.name, v: version(t.name) }))
-    .filter((t) => t.v.length === 3);
-  if (!tags.length) throw new Error('aucune version publiée trouvée sur GitHub.');
-  const latest = tags.reduce((a, b) => (newer(b.v, a.v) ? b : a));
-  const mine = localVersion();
-  const shown = (v) => `v${v[0]}.${v[1]}${v[2] ? '.' + v[2] : ''}`;
+  const latest = await release.latest();
+  if (!latest) throw new Error('aucune version publiée trouvée sur GitHub.');
+  // An unreadable version compares as older than any published one.
+  const mine = release.parseVersion(release.localVersion(ROOT));
   if (!newer(latest.v, mine)) {
     console.log(`Le bot est déjà à jour (${shown(mine)}).`);
     return;

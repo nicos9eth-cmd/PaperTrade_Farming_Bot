@@ -183,7 +183,7 @@ Laisse la fenêtre noire ouverte. Pour arrêter : **Ctrl+C**, ou ferme la fenêt
 - **PAPER** : le prix du PAPER, ce que vaut ton PAPER, et ce que vaut le PAPER farmé depuis le lancement face à ce qu'il a coûté (« gain estimé »). Le prix vient du marché en pré-lancement `para:PAPER` sur Hyperliquid, ouvert le 18/10/2026 alors que le token n'est pas encore transférable. C'est une estimation qui peut beaucoup bouger, pas un prix auquel tu peux vendre. Le bot ne s'en sert que pour l'affichage : aucune décision n'en dépend. Il est relu toutes les 30 s ; s'il n'a pas pu être lu depuis 10 min, la ligne affiche « prix du PAPER indisponible ».
 - **PAIRE** : la paire en cours. La jauge avance vers la liquidation ; le `|` marque l'endroit où le bot ferme.
 - **SESSION** : cycles, coût total, PAPER gagné et prix de revient depuis le lancement.
-- **ÉTAT** : ce que le bot fait, ou pourquoi il attend.
+- **ÉTAT** : ce que le bot fait, ou pourquoi il attend. À la suite, la version du bot qui tourne : **en vert** si c'est la dernière publiée, **en rouge** si une nouvelle version existe (lance alors `mettre-a-jour.bat`, voir « Mettre à jour le bot »).
 
 Tout est aussi écrit dans `bot.log`, et chaque cycle dans `journal.csv` (ouvrable avec Excel).
 
@@ -299,6 +299,8 @@ Pour retirer l'autorisation du bot : supprime `.session-key.json`, et le bot ne 
 Double-clique **`mettre-a-jour.bat`**. Il télécharge la dernière version depuis GitHub et remplace les fichiers du bot. **Tes réglages (`config.json`), ta clé de session, ton budget et tes journaux sont conservés.** Si un téléchargement échoue, rien n'est modifié : relance-le plus tard.
 
 Ensuite, si le bot tournait, ferme sa fenêtre et relance `bot-live.bat` : la nouvelle version n'est utilisée qu'au redémarrage.
+
+Depuis la v1.9.1, le bot vérifie lui-même toutes les 30 min s'il existe une nouvelle version. Si c'est le cas, sa version s'affiche en rouge sur la ligne ÉTAT et le journal l'écrit.
 
 `mettre-a-jour.bat` existe depuis la v1.6. Pour passer d'une version plus ancienne à la v1.6 (une seule fois) :
 

@@ -22,6 +22,7 @@ const gates = require('./lib/gates');
 const burst = require('./lib/burst');
 const scalp = require('./lib/scalp');
 const { liveMid } = require('./lib/feed');
+const release = require('./lib/release');
 let config;
 try {
   config = require('./lib/config').load();
@@ -60,6 +61,7 @@ const MAX_ERRORS = 5;
 const REFRESH_TICKS = 15;
 const SITE_CHECK_TICKS = 300;
 const PAPER_PRICE_STALE_MS = 10 * 60000; // an older PAPER price is not shown
+const RELEASE_CHECK_TICKS = 900; // latest published version, every 30 min (GitHub allows 60 reads an hour)
 // Refusals that only mean "not now": the bot waits and retries instead of counting an error.
 const TEMPORARY = new Set(['openInterest', 'tradingPaused', 'marketPaused', 'funding']);
 
@@ -240,10 +242,25 @@ async function main() {
       })
       .catch(() => {});
   await refreshPaperPrice();
+  // The version this process runs, read once: an update installed meanwhile only applies after a restart.
+  const running = release.localVersion();
+  let latest = null;
+  const refreshRelease = () =>
+    release
+      .latest()
+      .then((l) => {
+        if (!l) return;
+        const behind = release.newer(l.v, release.parseVersion(running));
+        if (behind && (!latest || l.name !== latest.name)) log(`Nouvelle version du bot disponible : ${l.name} (tu as v${running}). Lance mettre-a-jour.bat puis relance le bot.`);
+        latest = l;
+      })
+      .catch(() => {});
 
   log(version.build ? `Version du site détectée : ${version.build}` : `Version du site introuvable, utilisation de ${config.build} (config.json)`);
   log(`Mode ${ex.name} | disponible ${usd(state.available)} | ${state.positions.length} position(s) ouverte(s) | mint ${mintRate(proto.paper).toFixed(2)} PAPER/$`);
   if (dashboard.poolText(proto)) log(`${dashboard.poolText(proto)}${SIM_WINDOW ? ' (simulée : --simuler-fenetre)' : ''}`);
+  refreshRelease();
+  log(`Version du bot : v${running}`);
   log(paperPx ? `Prix du PAPER : ${dashboard.paperUsd(paperPx)} (pré-marché para:PAPER sur Hyperliquid) ; ton sac de ${Math.round(state.paper)} PAPER vaut ~${usd(state.paper * paperPx)}.` : 'Prix du PAPER indisponible pour l\'instant (pré-marché para:PAPER sur Hyperliquid).');
   if (LIVE && Math.abs(budgetFrom - state.realized) > 0.005) log(`Budget repris d'un lancement précédent : ${usd(budgetFrom - state.realized)} déjà dépensés sur ${usd(config.maxNetLossUsd)}`);
   if (lt) {
@@ -400,6 +417,8 @@ async function main() {
           stopReason,
           lighter: lt ? lighterView : null,
           paperPrice: paperPrice(),
+          version: running,
+          latest,
           events,
           totals: { cycles, spent: start.realized - realizedAll(), paper: state.paper - start.paper, budgetSpent: budgetFrom - realizedAll() },
         })
@@ -600,6 +619,7 @@ async function main() {
     if (tick % PROTO_TICKS === 0 || proto.paper.lp < NEAR_CLIFF * proto.paper.threshold) refreshProto();
     if (tick % SITE_CHECK_TICKS === 0) refreshSite();
     if (tick % REFRESH_TICKS === 0) refreshPaperPrice();
+    if (tick % RELEASE_CHECK_TICKS === 0) refreshRelease();
 
     const stateStale = Date.now() - stateAt > STALE_STATE_MS;
     const btcPositions = state.positions.filter((p) => p.market && p.market.coin === 'BTC');
